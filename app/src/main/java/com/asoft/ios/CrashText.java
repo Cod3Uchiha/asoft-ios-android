@@ -43,8 +43,20 @@ final class CrashText {
         return null;
     }
 
+    /** The engine's periodic statistics line (~330 characters, every few seconds): no cause, only bulk. */
+    static final String SAMPLE = "el-sample";
+
     private static boolean notable(String l) {
-        return l.contains(FATAL) || l.contains("reims[warn]") || l.contains("reims[error]") || l.contains("panicked at");
+        if (l.contains(SAMPLE)) {
+            return false;
+        }
+        if (l.contains(FATAL) || l.contains("reims[warn]") || l.contains("reims[error]") || l.contains("panicked at")) {
+            return true;
+        }
+        // QEMU's own last words, glib's assertions, Android's allocator, a kernel that refused the engine
+        String s = l.toLowerCase(java.util.Locale.ROOT);
+        return s.startsWith("qemu-system-aarch64:") || s.contains("assertion") || s.contains("bail out") || s.contains("aborted")
+                || s.contains("abort message") || s.contains("scudo") || s.contains("the kernel refused");
     }
 
     /**
@@ -266,11 +278,27 @@ final class CrashText {
             case EXIT_OTHER: {
                 // a swipe from Recents ends the task with "remove task"
                 String d = description == null ? "" : description.toLowerCase(java.util.Locale.ROOT);
+                // (the phone maker's battery manager, makerKill(), is a known cause but not the user's end: it is
+                // weighed like low memory, 0 = a record only while something was going on)
                 return d.contains("remove task") || d.contains("swipe") || d.contains("user request") ? -1 : 0;
             }
             default:
                 return 0;
         }
+    }
+
+    /**
+     * Whether an EXIT_OTHER @description is the phone maker's own battery or background manager. Only "o-kill"
+     * (OnePlus, "o-kill(6)" after 22 minutes of setup with plenty of memory) is confirmed by a real report; the
+     * other markers are the managers' names as they are known, not seen in a report yet.
+     */
+    static boolean makerKill(String description) {
+        if (description == null) {
+            return false;
+        }
+        String d = description.toLowerCase(java.util.Locale.ROOT);
+        return d.contains("o-kill") || d.contains("oplus") || d.contains("hans") || d.contains("powerkeeper")
+                || d.contains("miui") || d.contains("hw_") || d.contains("smartpower");
     }
 
     /** The reason in plain words: "low memory", "killed (signal 9), usually Android freeing memory". */
@@ -295,7 +323,11 @@ final class CrashText {
             case EXIT_FREEZER:
                 return "Android froze it, then closed it";
             case EXIT_OTHER:
-                return "Android closed it" + (blank(description) ? "" : " (" + cap(description, 120) + ")");
+                if (makerKill(description)) {
+                    return "the phone's own battery manager closed it (" + cap(description, 120) + "); allowing the app to run"
+                            + " in the background without restrictions (the app's battery settings) avoids it";
+                }
+                return "Android closed it" +(blank(description) ? "" : " (" + cap(description, 120) + ")");
             case EXIT_NOT_KEPT:
                 return "Android 10 does not tell apps why";
             default:
@@ -500,7 +532,10 @@ final class CrashText {
         }
         List<String> lines = new ArrayList<>(tailLines.size());
         for (String l : tailLines) {
-            lines.add(REPEATS.matcher(l).replaceFirst(""));
+            // (a statistics line is never a cause, whatever words its counters hold)
+            if (!l.contains(SAMPLE)) {
+                lines.add(REPEATS.matcher(l).replaceFirst(""));
+            }
         }
         for (int i = lines.size() - 1; i >= 0; i--) {
             String l = lines.get(i).trim();
@@ -529,13 +564,24 @@ final class CrashText {
             return "Android's limit of 65,530 memory mappings per app was reached";
         }
         String errorLine = null, assertion = null;
-        for (int i = lines.size() - 1; i >= 0 && errorLine == null; i--) {
-            String l = lines.get(i);
-            if (l.contains("error") || l.contains("Error") || l.contains("fatal") || l.contains("Assertion") || l.contains("assert")) {
-                errorLine = l.trim();
-                if (l.contains("Assertion") && l.contains("failed")) {
-                    assertion = errorLine;
+        for (int i = lines.size() - 1; i >= 0 && (errorLine == null || assertion == null); i--) {
+            String l = lines.get(i), low = l.toLowerCase(java.util.Locale.ROOT);
+            // (glib prints "ERROR:file.c:12:func: assertion failed: (x)", then "Bail out!")
+            if (low.contains("error") || low.contains("fatal") || low.contains("assert") || low.contains("bail out")
+                    || low.contains("abort")) {
+                if (errorLine == null) {
+                    errorLine = l.trim();
                 }
+                if (assertion == null && low.contains("assertion") && low.contains("failed")) {
+                    assertion = l.trim();
+                }
+            }
+        }
+        // "Bail out!" and "Aborted" only follow the line that says why
+        if (assertion != null && errorLine != null && !errorLine.toLowerCase(java.util.Locale.ROOT).contains("assert")) {
+            String low = errorLine.toLowerCase(java.util.Locale.ROOT);
+            if (low.contains("bail out") || low.contains("abort")) {
+                errorLine = assertion;
             }
         }
         if (signalled(raw)) {
@@ -760,16 +806,6 @@ final class CrashText {
         return enc(fenced(line) + "\n").length();
     }
 
-    /** How many of @costs' last entries fit in @room. */
-    private static int newest(int[] costs, int room) {
-        int n = 0, used = 0;
-        for (int i = costs.length - 1; i >= 0 && used + costs[i] <= room; i--) {
-            used += costs[i];
-            n++;
-        }
-        return n;
-    }
-
     private static int cost(List<String> lines) {
         int s = 0;
         for (String l : lines) {
@@ -778,13 +814,72 @@ final class CrashText {
         return s;
     }
 
-    /** The last lines of @lines that fit in @room. */
-    private static List<String> newestOf(List<String> lines, int room) {
-        int[] c = new int[lines.size()];
-        for (int i = 0; i < c.length; i++) {
-            c[i] = urlCost(lines.get(i));
+    /** @l cut so that it costs at most @room of link; null when not even a few words of it fit. */
+    private static String shorten(String l, int room) {
+        int max = l.length();
+        while (max > 40) {
+            max -= max / 8 + 1;
+            String s = cutLine(l, max);
+            if (urlCost(s) <= room) {
+                return s;
+            }
         }
-        return lines.subList(lines.size() - newest(c, room), lines.size());
+        return null;
+    }
+
+    /**
+     * The last lines of @lines that fit in @room, in their order. A reims fatal line comes first, before any other
+     * line (it says why QEMU ended), and is shortened when even it alone does not fit. @cutOverflow: the newest
+     * other line that does not fit is shortened to what is left instead of ending the list (the head's notable
+     * lines: one long one must not empty it).
+     */
+    private static List<String> newestOf(List<String> lines, int room, boolean cutOverflow) {
+        int n = lines.size();
+        String[] pick = new String[n];
+        int left = room;
+        boolean firstFatal = true;
+        for (int i = n - 1; i >= 0; i--) {
+            String l = lines.get(i);
+            if (!l.contains(FATAL)) {
+                continue;
+            }
+            int c = urlCost(l);
+            if (c <= left) {
+                pick[i] = l;
+                left -= c;
+            } else if (firstFatal) {
+                String s = shorten(l, left);
+                if (s != null) {
+                    pick[i] = s;
+                    left -= urlCost(s);
+                }
+            }
+            firstFatal = false;
+        }
+        for (int i = n - 1; i >= 0; i--) {
+            String l = lines.get(i);
+            if (l.contains(FATAL)) {
+                continue;
+            }
+            int c = urlCost(l);
+            if (c <= left) {
+                pick[i] = l;
+                left -= c;
+            } else {
+                String s = cutOverflow ? shorten(l, left) : null;
+                if (s != null) {
+                    pick[i] = s;
+                }
+                break;
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (String p : pick) {
+            if (p != null) {
+                out.add(p);
+            }
+        }
+        return out;
     }
 
     private static final String TAIL_MARK = "--- the last ";
@@ -802,19 +897,19 @@ final class CrashText {
             }
         }
         if (m < 0) {
-            return newestOf(stderr, room);
+            return newestOf(stderr, room, false);
         }
         List<String> head = stderr.subList(0, m), tail = stderr.subList(m + 1, stderr.size());
         List<String> h = head;
         if (!head.isEmpty() && cost(head) > room / 2) {
-            List<String> rest = newestOf(head.subList(1, head.size()), room / 2 - urlCost(head.get(0)));
+            List<String> rest = newestOf(head.subList(1, head.size()), room / 2 - urlCost(head.get(0)), true);
             h = new ArrayList<>();
             if (!rest.isEmpty()) {
                 h.add(head.get(0));
                 h.addAll(rest);
             }
         }
-        List<String> t = newestOf(tail, room - cost(h) - urlCost(TAIL_MARK + tail.size() + " lines ---"));
+        List<String> t = newestOf(tail, room - cost(h) - urlCost(TAIL_MARK + tail.size() + " lines ---"), false);
         List<String> out = new ArrayList<>(h.size() + t.size() + 1);
         out.addAll(h);
         out.add(TAIL_MARK + t.size() + " lines ---");
@@ -839,7 +934,29 @@ final class CrashText {
      */
     static String fitBody(String repo, String title, LinkedHashMap<String, String> facts, String what, String cause,
             List<Block> blocks, int maxUrl) {
-        String full = body(facts, what, cause, blocks, false);
+        // the engine's statistics lines are bulk, not cause: only the clipboard's full report keeps them
+        boolean thinned = false;
+        List<Block> kept = new ArrayList<>(blocks.size());
+        for (Block k : blocks) {
+            List<String> ls = new ArrayList<>(k.lines.size());
+            for (String l : k.lines) {
+                if (!l.contains(SAMPLE)) {
+                    ls.add(l);
+                }
+            }
+            if (ls.size() != k.lines.size()) {
+                // the tail's heading counts the lines under it
+                for (int i = 0; i < ls.size(); i++) {
+                    if (ls.get(i).startsWith(TAIL_MARK)) {
+                        ls.set(i, TAIL_MARK + (ls.size() - i - 1) + " lines ---");
+                    }
+                }
+            }
+            thinned |= ls.size() != k.lines.size();
+            kept.add(ls.size() == k.lines.size() ? k : k.with(ls));
+        }
+        blocks = kept;
+        String full = body(facts, what, cause, blocks, thinned);
         if (issueUrl(repo, title, full).length() <= maxUrl) {
             return full;
         }

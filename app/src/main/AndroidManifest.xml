@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Free memory while iOS runs (MemoryCleaner): other apps' background processes, Android 13 and older -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
@@ -103,5 +104,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Waits for the pairing code of Wireless debugging while the user reads it in Settings" />
         </service>
+        <!-- a log shared as a file (ShareProvider): only cache/share, only to the app the share sheet grants a URI to -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

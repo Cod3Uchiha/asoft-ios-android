@@ -191,7 +191,7 @@ final class SetupScreen {
                 s.record = null;
                 s.error = "Close iOS first (side bar > Saves > Save and close): the setup needs its memory.";
             } else {
-                SetupService.start(a);
+                Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.start(a));
             }
         });
         cancel = new Button(a);

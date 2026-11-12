@@ -299,6 +299,16 @@ public class LogsActivity extends Activity {
                 CrashReport.share(this, s.title, s.text);
             }
         });
+        link(actions, "Share as a file", LINK, v -> {
+            if (s.record != null) {
+                new Thread(() -> {
+                    String all = CrashReport.shareText(this, s.record);
+                    runOnUiThread(() -> CrashReport.shareFile(this, s.record.summary(), all));
+                }, "share-log").start();
+            } else {
+                CrashReport.shareFile(this, s.title, s.text);
+            }
+        });
         link(actions, "Report on GitHub", LINK, v -> report(s));
         if (s.record != null) {
             link(actions, "Delete", RED, v -> new AlertDialog.Builder(this)

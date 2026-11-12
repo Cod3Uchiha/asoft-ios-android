@@ -548,7 +548,10 @@ public class MainActivity extends Activity {
      * Runs @go, first asking when power saving is on and iOS is not running yet (a boot or a
      * load then takes several times longer).
      */
-    private void whenPowerOk(Runnable go) {
+    private void whenPowerOk(Runnable start) {
+        // (asked once per install, before a start only: not while iOS runs; "Yes" opens the system's dialog and
+        // the user taps Start again, since the screen opened next would cover it)
+        Runnable go = Guest.running() ? start : () -> Battery.askOnce(this, "iOS keeps running while you use other apps", false, start);
         if (Guest.running() || !PowerCheck.saverOn(this)) {
             go.run();
             return;

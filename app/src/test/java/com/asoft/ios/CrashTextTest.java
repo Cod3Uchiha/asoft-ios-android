@@ -351,6 +351,126 @@ public class CrashTextTest {
         assertEquals("reason (99)", CrashText.exitName(99));
     }
 
+    @Test
+    public void makerBatteryManagerKillIsNamed() {
+        String w = CrashText.exitWords(CrashText.EXIT_OTHER, 0, "o-kill(6)");
+        assertTrue(w, w.contains("battery manager"));
+        assertTrue(w, w.contains("(o-kill(6))"));
+        assertTrue(w, w.contains("without restrictions"));
+        assertEquals(0, CrashText.exitWeight(CrashText.EXIT_OTHER, "O-Kill(6)"));
+        // an unknown description is still shown raw
+        assertEquals("Android closed it (something else)", CrashText.exitWords(CrashText.EXIT_OTHER, 0, "something else"));
+        assertFalse(CrashText.makerKill(null));
+    }
+
+    // -- why QEMU ended, in a shortened link
+
+    private static final String SAMPLE_LINE = "el-sample t=1234.5 vcpu0 el0=6% tcg=71% futex=46% tlbi=12 stubs=24 "
+            + "rss=5120M maps=4800 gpu=idle q=0 ipc=0.8 irq=1200 wfi=88% syscalls=91000 pf=12 tlbflush=3 ".repeat(2);
+    private static final String MAPPINGS_FATAL = "reims-vgpu: fatal: platform call mmap: the library's views of memory ran out of kernel"
+            + " mappings (vm.max_map_count 65530) while mapping a texture heap; " + "the engine cannot go on and ends here ".repeat(10);
+
+    private static List<String> samplesThen(String... first) throws IOException {
+        StringBuilder in = new StringBuilder();
+        for (String f : first) {
+            in.append(f).append('\n');
+        }
+        for (int i = 0; i < 300; i++) {
+            in.append(SAMPLE_LINE).append(i).append('\n');
+        }
+        return CrashText.evidence(new BufferedReader(new StringReader(in.toString())), 200, 80);
+    }
+
+    @Test
+    public void longFatalLineSurvivesTheSamplesAfterIt() throws IOException {
+        assertTrue(MAPPINGS_FATAL.length() > 400);
+        List<String> ev = samplesThen(MAPPINGS_FATAL);
+        LinkedHashMap<String, String> facts = new LinkedHashMap<>();
+        facts.put("App", "0.1.5");
+        String cause = CrashText.cause(CrashText.fatalLine(ev), ev, 6);
+        assertEquals(true, cause.startsWith("platform call mmap"));
+        // the fatal line is only in the head, and the room is small
+        for (int max : new int[] {3000, 2500, 2200}) {
+            String b = CrashText.fitBody("o/r", "t", facts, "w", "c", ev, Collections.singletonList("app"), max);
+            assertTrue(CrashText.issueUrl("o/r", "t", b).length() <= max);
+            assertTrue(max + ": " + b, b.contains("reims-vgpu: fatal: platform call mmap"));
+            assertFalse(b, b.contains("el-sample"));
+        }
+        assertEquals("Android's limit of 65,530 memory mappings per app was reached",
+                CrashText.cause(null, ev, 6));
+    }
+
+    @Test
+    public void singleOverLongNotableLineIsShortenedNotDropped() {
+        String longWarn = "reims[warn] " + "a very long warning that goes on and on ".repeat(60);
+        List<String> err = new ArrayList<>();
+        err.add("--- reims/panic lines before the last 200 lines ---");
+        err.add(longWarn);
+        err.add("--- the last 3 lines ---");
+        err.addAll(Arrays.asList("t1", "t2", "t3"));
+        List<String> fit = CrashText.fitStderr(err, 1000);
+        assertEquals("--- reims/panic lines before the last 200 lines ---", fit.get(0));
+        String kept = fit.get(1);
+        assertTrue(kept, kept.startsWith("reims[warn] a very long warning"));
+        assertTrue(kept, kept.endsWith("…"));
+        assertTrue(kept.length() < longWarn.length());
+        assertTrue(fit.contains("t3"));
+    }
+
+    @Test
+    public void fatalLineBeatsOtherHeadLines() {
+        String fatal = "reims-vgpu: fatal: " + "x".repeat(900);
+        List<String> err = new ArrayList<>();
+        err.add("--- reims/panic lines before the last 200 lines ---");
+        err.add(fatal);
+        for (int i = 0; i < 20; i++) {
+            err.add("reims[warn] newer warning number " + i);
+        }
+        err.add("--- the last 1 lines ---");
+        err.add("end");
+        List<String> fit = CrashText.fitStderr(err, 1200);
+        boolean has = false;
+        for (String l : fit) {
+            has |= l.startsWith("reims-vgpu: fatal: x");
+        }
+        assertTrue(fit.toString(), has);
+        assertTrue(fit.contains("end"));
+    }
+
+    @Test
+    public void glibAssertionIsTheCause() {
+        List<String> lines = Arrays.asList("--- the last 3 lines ---", "ok",
+                "ERROR:../foo.c:12:bar: assertion failed: (x)", "Bail out! ERROR:../foo.c:12:bar: assertion failed: (x)");
+        assertTrue(CrashText.cause(null, lines, 0x100).contains("assertion failed: (x)"));
+        // a bare "Bail out!" after it
+        lines = Arrays.asList("ERROR:../foo.c:12:bar: assertion failed: (x)", "Bail out!");
+        assertEquals("ERROR:../foo.c:12:bar: assertion failed: (x)", CrashText.cause(null, lines, 0x100));
+        assertTrue(CrashText.cause(null, lines, 6).startsWith("ERROR:../foo.c:12:bar: assertion failed: (x); QEMU was ended by signal 6"));
+        // a statistics line is never the cause
+        assertEquals("QEMU ended with exit code 1", CrashText.cause(null, Arrays.asList(SAMPLE_LINE + " errors=0"), 0x100));
+    }
+
+    @Test
+    public void samplesAreInTheFullTextNotInTheLink() throws IOException {
+        List<String> ev = samplesThen("reims[warn] early warning");
+        LinkedHashMap<String, String> facts = new LinkedHashMap<>();
+        facts.put("App", "0.1.5");
+        List<String> app = Collections.singletonList("app");
+        String whole = CrashText.body(facts, "w", "c", ev, app, false);
+        assertTrue(whole.contains("el-sample"));
+        String link = CrashText.fitBody("o/r", "t", facts, "w", "c", ev, app, 100_000);
+        assertFalse(link, link.contains("el-sample"));
+        assertTrue(link.contains("reims[warn] early warning"));
+        // el-sample lines are not kept as notable ones
+        List<String> kept = CrashText.evidence(new BufferedReader(new StringReader(SAMPLE_LINE + "\n" + "x\n".repeat(300))), 5, 80);
+        assertFalse(kept.toString(), kept.get(0).startsWith("--- reims"));
+        // and QEMU's own last words, glib's assertions and the allocator's notes are
+        kept = CrashText.evidence(new BufferedReader(new StringReader("qemu-system-aarch64: out of memory\nScudo ERROR: x\n"
+                + "x\n".repeat(300))), 5, 80);
+        assertEquals("qemu-system-aarch64: out of memory", kept.get(1));
+        assertEquals("Scudo ERROR: x", kept.get(2));
+    }
+
     // -- a record's file (CrashReport)
 
     private static LinkedHashMap<String, String> header() {

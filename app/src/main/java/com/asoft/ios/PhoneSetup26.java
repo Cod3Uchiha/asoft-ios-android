@@ -1169,15 +1169,40 @@ final class PhoneSetup26 {
             long lastDiag = -1;
             boolean diagOff = false;
             String plist = "/var/mobile/Library/Preferences/com.apple.migration.plist";
+            // an iOS whose shell goes silent (2026-11-12, a user's two boots: no answer from minute 50 or 61 on, QEMU
+            // alive, no panic line): the last answer of its shell, and what its screen and its console log were at then
+            File serial = new File(Guest.runDir(c), "serial.txt");
+            long answered = System.currentTimeMillis(), quietTold = 0, serialThen = serial.length();
+            int framesThen = framesShown(c);
             while (true) {
                 if (cancelled.getAsBoolean()) {
                     throw new IOException("stopped");
                 }
                 mustRun(c, "DataMigration");
                 long min = (System.currentTimeMillis() - t1) / 60_000;
-                p.step("ios26:wallpaper", 15 + (int) Math.min(70, min * 70 / 60),
-                        "DataMigration is setting iOS up (" + min + " min; on a PC about 50). The phone may get warm.");
+                p.step("ios26:wallpaper", 15 + (int) Math.min(70, min * 70 / 60), min <= 75
+                        ? "DataMigration is setting iOS up (" + min + " min; on a PC about 50). The phone may get warm."
+                        : "DataMigration is taking longer than usual (" + min + " min; a phone needs about 60 to 75)."
+                                + " It can take up to two hours on a phone; leave it running.");
                 String o = con.run("cat " + plist, 90_000, 60_000);
+                long now = System.currentTimeMillis();
+                if (o != null) {
+                    answered = now;
+                    quietTold = 0;
+                    serialThen = serial.length();
+                    framesThen = framesShown(c);
+                } else if (now - answered >= 15 * 60_000 && now - quietTold >= 15 * 60_000) {
+                    // every 15 min without an answer: has its screen or its console moved since? Only said, the boot
+                    // goes on: that user's second boot finished its DataMigration after more than 69 min, 19 of them
+                    // or more with no answer, so a silent shell alone is no end
+                    quietTold = now;
+                    int frames = framesShown(c) - framesThen;
+                    long bytes = serial.length() - serialThen;
+                    AppLog.note(c, "setup26: iOS's shell has not answered for " + (now - answered) / 60_000 + " min ("
+                            + frames + " new frames, " + bytes + " new bytes of console since)");
+                    serialThen = serial.length();
+                    framesThen = framesShown(c);
+                }
                 // (or in an answer that came after run() had sent the command again with a new tag)
                 if (o != null && o.contains("LastSystemVersion") || con.seen("LastSystemVersion")) {
                     break;
