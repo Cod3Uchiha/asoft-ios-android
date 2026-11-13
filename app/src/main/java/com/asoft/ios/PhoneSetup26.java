@@ -985,7 +985,7 @@ final class PhoneSetup26 {
         return b;
     }
 
-    /** Ends a setup boot: the guest's disks synced through its shell, QEMU quit; true when sync answered. */
+    /** Ends a setup boot: the guest's disks synced through its shell (when @con), QEMU quit; true when sync answered. */
     private static boolean endBoot(Context c, GuestConsole con) {
         boolean synced = con != null && con.run("sync", 180_000, 60_000) != null;
         Qmp q = Guest.qmp();
@@ -1003,6 +1003,75 @@ final class PhoneSetup26 {
             con.close();
         }
         return synced;
+    }
+
+    /**
+     * Ends a boot of the setup that did its work and keeps its disk (@disk; @what for the log). Through the guest's
+     * shell first (sync, then QEMU quits). A shell that does not answer (2026-11-12: three phones, after a finished
+     * DataMigration; their Resume redid the hour and failed at the same place) no longer loses the boot: the end is
+     * then the one of every Turn off, which asks the guest for nothing. Once the disk has had no write for a while:
+     * QMP stop (pauses the guest and flushes every disk through QEMU), then quit. What that can lose is what the
+     * guest had not written out yet, its last seconds. Its volumes are journaled HFS+: iOS, and the helper's
+     * fsck.hfsplus (root26-do.sh), replay the journal at the next mount, as after every Turn off. The qcow2 is checked after.
+     */
+    private static void saveBoot(Context c, GuestConsole con, File disk, String what) throws IOException {
+        long t0 = System.currentTimeMillis();
+        try {
+            // debug: files/setup/a26/phone/no-shell-sync ends every boot as if the shell had not answered (to try the
+            // end without it on a phone whose shell does answer)
+            boolean noShell = (c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                    && new File(work(c), "phone/no-shell-sync").isFile();
+            // (reset: the shell's input line may hold the half of an earlier command)
+            if (!noShell && con.run("sync", 180_000, 60_000, true) != null) {
+                AppLog.note(c, "setup26: " + what + ": end of the boot through the shell: sync answered after "
+                        + (System.currentTimeMillis() - t0) / 1000 + " s, quit");
+                endBoot(c, null);
+                return;
+            }
+            AppLog.note(c, "setup26: " + what + ": the guest's shell did not answer sync in " + (System.currentTimeMillis() - t0) / 1000
+                    + " s; ending the boot without it");
+            Qmp q = Guest.qmp();
+            SetupEnd.Idle idle = new SetupEnd.Idle(SetupEnd.IDLE_MS, SetupEnd.CEILING_MS);
+            String how;
+            while (true) {
+                String r = q == null ? null : q.call("{\"execute\":\"query-blockstats\"}", 5000);
+                long now = System.currentTimeMillis();
+                idle.sample(now, SetupEnd.sum(r, "wr_operations"));
+                SetupEnd.Verdict v = idle.verdict(now);
+                if (v != SetupEnd.Verdict.WAIT || !Guest.running()) {
+                    how = v == SetupEnd.Verdict.QUIET ? "the disk was quiet for " + SetupEnd.IDLE_MS / 1000 + " s"
+                            : v == SetupEnd.Verdict.CEILING ? "the disk was still being written after " + SetupEnd.CEILING_MS / 1000
+                                    + " s (stopped anyway)" : "QEMU ended";
+                    break;
+                }
+                sleep(SetupEnd.POLL_MS);
+            }
+            if (!Guest.running()) {
+                throw new IOException("QEMU ended while the disk was being saved; tap Resume to boot again");
+            }
+            Guest.willEnd();
+            // stop: the vCPUs pause and every disk is flushed before the answer
+            String stopped = q == null ? null : q.call("{\"execute\":\"stop\"}", 15_000);
+            String st = q == null ? null : q.call("{\"execute\":\"query-blockstats\"}", 5000);
+            long failed = Math.max(SetupEnd.sum(st, "failed_wr_operations"), 0) + Math.max(SetupEnd.sum(st, "failed_flush_operations"), 0);
+            AppLog.note(c, "setup26: " + what + ": " + how + " (" + idle.writesSince() + " writes meanwhile); stop "
+                    + (stopped == null ? "got no answer" : "answered") + ", disk flushes " + SetupEnd.sum(st, "flush_operations")
+                    + ", failed writes and flushes " + failed);
+            Guest.stopAndWait();
+            if (stopped == null || failed > 0) {
+                throw new IOException(stopped == null ? "QEMU did not stop to flush the disk; tap Resume to redo this boot"
+                        : "the phone's storage refused writes of this boot; tap Resume to redo this boot");
+            }
+            String[] r = Emu.qemuImg(c, "check", "--output=json", disk.getPath());
+            long bad = SetupEnd.corruptions(r[1]);
+            AppLog.note(c, "setup26: " + what + ": qemu-img check " + disk.getName() + ": exit " + r[0] + ", corruptions " + bad);
+            if ("2".equals(r[0]) || bad > 0) {
+                throw new IOException("the disk of this boot has errors in its tables; tap Resume to redo this boot");
+            }
+            AppLog.note(c, "setup26: " + what + ": end of the boot without the shell: stop, flush, quit, disk checked");
+        } finally {
+            con.close();
+        }
     }
 
     private static void sleep(long ms) {
@@ -1103,9 +1172,7 @@ final class PhoneSetup26 {
             AppLog.note(c, "setup26: persona files after " + (System.currentTimeMillis() - t0) / 1000 + " s");
             sleep(30_000);
             p.step("ios26:firstboot", 97, "Saving iOS's first boot");
-            if (!endBoot(c, con)) {
-                throw new IOException("the guest did not answer sync; tap Resume to redo the first boot");
-            }
+            saveBoot(c, con, in(c, "root26g.qcow2"), "ios26:firstboot");
         } catch (IOException | RuntimeException e) {
             if (Guest.running()) {
                 endBoot(c, null);
@@ -1174,6 +1241,12 @@ final class PhoneSetup26 {
             File serial = new File(Guest.runDir(c), "serial.txt");
             long answered = System.currentTimeMillis(), quietTold = 0, serialThen = serial.length();
             int framesThen = framesShown(c);
+            // the line of K18's record (SetupTick): every 5 min and at the first no answer, from the console and stderr alone
+            SetupTick tick = new SetupTick(serial, new File(Guest.runDir(c), "qemu-stderr.txt"), new File(work(c), "phone/logs"),
+                    "wallpaper", framesThen);
+            long suspend0 = android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis();
+            long lastTick = -1;
+            boolean toldSilent = false;
             while (true) {
                 if (cancelled.getAsBoolean()) {
                     throw new IOException("stopped");
@@ -1202,6 +1275,17 @@ final class PhoneSetup26 {
                             + frames + " new frames, " + bytes + " new bytes of console since)");
                     serialThen = serial.length();
                     framesThen = framesShown(c);
+                }
+                boolean first = o == null && !toldSilent;
+                if (first || min / 5 != lastTick) {
+                    lastTick = min / 5;
+                    toldSilent |= first;
+                    long susp = android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis() - suspend0;
+                    AppLog.note(c, "setup26: " + tick.tick((int) min, first ? "first no answer" : "5 min", framesShown(c), susp / 1000,
+                            (now - t0) / 1000));
+                    if (first) {
+                        tick.silent();
+                    }
                 }
                 // (or in an answer that came after run() had sent the command again with a new tag)
                 if (o != null && o.contains("LastSystemVersion") || con.seen("LastSystemVersion")) {
@@ -1237,10 +1321,12 @@ final class PhoneSetup26 {
                 p.step("ios26:wallpaper", 85 + (int) ((System.currentTimeMillis() - t2) / 30_000), "PosterBoard writes its poster store");
                 sleep(10_000);
             }
+            // (#37 and #19: the shell answered up to here and not after PosterBoard's wait: did it die in it?)
+            AppLog.note(c, "setup26: " + tick.tick((int) ((System.currentTimeMillis() - t1) / 60_000), "end of PosterBoard's wait", framesShown(c),
+                    (android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis() - suspend0) / 1000,
+                    (System.currentTimeMillis() - t0) / 1000));
             p.step("ios26:wallpaper", 98, "Saving the disk");
-            if (!endBoot(c, con)) {
-                throw new IOException("the guest did not answer sync; tap Resume to redo this boot");
-            }
+            saveBoot(c, con, in(c, "root.qcow2"), "ios26:wallpaper");
         } catch (IOException | RuntimeException e) {
             if (Guest.running()) {
                 endBoot(c, null);
@@ -1424,9 +1510,7 @@ final class PhoneSetup26 {
             }
             sleep(60_000);
             p.step("watchos:firstboot", 97, "Saving the watch's first boot");
-            if (!endBoot(c, con)) {
-                throw new IOException("the guest did not answer sync; tap Resume to redo the first boot");
-            }
+            saveBoot(c, con, in(c, "watchos/watch.qcow2"), "watchos:firstboot");
         } catch (IOException | RuntimeException e) {
             if (Guest.running()) {
                 endBoot(c, null);
