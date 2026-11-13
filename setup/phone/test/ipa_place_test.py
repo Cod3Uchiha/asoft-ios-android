@@ -42,6 +42,11 @@ def run(root, ipa):
     return r.returncode, r.stdout, new
 
 
+def swap(root):
+    r = subprocess.run([sys.executable, '-I', PLACE, '--swap', root, 'Game.app'], capture_output=True, text=True)
+    return r.returncode
+
+
 bad = 0
 
 
@@ -65,31 +70,33 @@ def fresh():
 
 r = fresh()
 rc, out, new = run(r, ipa)
-check('new app placed, ipa-new 1', rc == 0 and new == '1' and 'ipa-replaced' not in out
-      and os.path.exists(r + '/Applications/Game.app/.asoft-ipa'))
+check('new app is staged, not yet in /Applications; ipa-new 1', rc == 0 and new == '1' and 'ipa-replaced' not in out
+      and os.path.exists(r + '/Applications/.asoft-stage/Game.app/.asoft-ipa') and not os.path.exists(r + '/Applications/Game.app'))
+check('  the swap puts it in place and removes the staging folder', swap(r) == 0 and os.path.exists(r + '/Applications/Game.app/.asoft-ipa')
+      and not os.path.exists(r + '/Applications/.asoft-stage'))
 
 r = fresh()
 d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.old.game', 'CFBundleShortVersionString': '1.0'})
 rc, out, new = run(r, ipa)
-check('unmarked third-party app replaced and marked',
-      rc == 0 and not os.path.exists(d + '/old-file') and os.path.exists(d + '/.asoft-ipa'))
+check('unmarked third-party app: the old one stays until the swap', rc == 0 and os.path.exists(d + '/old-file'))
+check('  after the swap it is replaced and marked', swap(r) == 0 and not os.path.exists(d + '/old-file') and os.path.exists(d + '/.asoft-ipa'))
 check('  other id: counts as new, says what was replaced',
       new == '1' and 'ASOFT: ipa-replaced Game.app com.old.game 1.0' in out)
 
 r = fresh()
 d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.rovio.baba', 'CFBundleShortVersionString': '25.0'}, fmt=plistlib.FMT_XML)
 rc, out, new = run(r, ipa)
-check('unmarked, same id (XML plist): replaced, ipa-new 0', rc == 0 and new == '0' and 'com.rovio.baba 25.0' in out)
+check('unmarked, same id (XML plist): ipa-new 0', rc == 0 and new == '0' and 'com.rovio.baba 25.0' in out and swap(r) == 0)
 
 r = fresh()
 d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.rovio.baba'}, mark=True)
 rc, out, new = run(r, ipa)
-check('marked app replaced, ipa-new 0', rc == 0 and new == '0' and not os.path.exists(d + '/old-file'))
+check('marked app replaced, ipa-new 0', rc == 0 and new == '0' and swap(r) == 0 and not os.path.exists(d + '/old-file'))
 
 r = fresh()
 d = put_app(r, 'Game.app', None, mark=True)
 rc, out, new = run(r, ipa)
-check('marked app without a plist replaced, ipa-new 0', rc == 0 and new == '0')
+check('marked app without a plist replaced, ipa-new 0', rc == 0 and new == '0' and swap(r) == 0)
 
 r = fresh()
 d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.apple.Game'})
@@ -106,6 +113,21 @@ d = put_app(r, 'Game.app', None)
 open(d + '/Info.plist', 'wb').write(b'garbage')
 rc, out, new = run(r, ipa)
 check('unreadable plist refused', rc == 2 and 'cannot replace it' in out)
+
+# a staged app dropped (the job failed later): the old one is as it was, no staging folder
+r = fresh()
+d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.old.game'})
+rc, out, new = run(r, ipa)
+subprocess.run([sys.executable, '-I', PLACE, '--drop', r])
+check('drop: old app untouched, staging gone', rc == 0 and os.path.exists(d + '/old-file') and not os.path.exists(r + '/Applications/.asoft-stage'))
+
+# a swap cut between its two renames: the next placing brings the old app back first
+r = fresh()
+d = put_app(r, 'Game.app', {'CFBundleIdentifier': 'com.old.game'})
+os.makedirs(r + '/Applications/.asoft-stage')
+os.rename(d, r + '/Applications/.asoft-stage/old-Game.app')
+rc, out, new = run(r, ipa)
+check('recover: a cut swap gives the old app back before the new placing', rc == 0 and 'ipa-replaced Game.app com.old.game' in out)
 
 shutil.rmtree(tmp, ignore_errors=True)
 print('failures:', bad)

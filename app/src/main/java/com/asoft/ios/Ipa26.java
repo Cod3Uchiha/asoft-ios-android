@@ -23,7 +23,10 @@ import java.util.zip.ZipFile;
  * APFS Data volume and iOS 26's disk is HFS+, so the app goes in the way the system apps do: the helper VM puts
  * the .app into /Applications on the user disk and adds every Mach-O's CDHash to a trust cache (setup/phone/
  * jobs/ios26-ipa.sh). A developer-signed app (get-task-allow, which AMFI refuses while Developer Mode is off)
- * has that entitlement switched off first (noget.py, the PC's too). Done by hand once on 2026-11-12 (Super Mario
+ * has that entitlement switched off first (noget.py, the PC's too), and every Mach-O slice without a SHA-256 code
+ * directory that matches its pages (unsigned, SHA-1 only, a decrypted binary's changed pages) is signed again ad hoc
+ * (setup/phone/adhoc.py); a file that cannot be signed fails the install. The new app is made beside the old one and
+ * takes its place only when everything is ready, so a failure leaves the disk as it was. Done by hand once on 2026-11-12 (Super Mario
  * 64), what this does.
  *
  * What it changes, and what follows from it:
@@ -49,7 +52,8 @@ final class Ipa26 {
         /** "AngryBirds2.app (was com.rovio.baba 25.0)" when the job replaced an app that was there already, else "". */
         String replaced = "";
         int noget;                                  // files that had get-task-allow switched off
-        final List<String> noSignature = new ArrayList<>();
+        /** "PATH (SHA-1 only)": files that had no usable signature and were signed ad hoc (setup/phone/adhoc.py). */
+        final List<String> signed = new ArrayList<>();
         final List<String> warnings = new ArrayList<>();
         long seconds;
     }
@@ -141,8 +145,8 @@ final class Ipa26 {
     /**
      * Installs the .ipa @in (@total bytes, or -1; @name only for the log) into iOS 26's user disk. About a minute
      * for a small app, plus the time the file takes to copy. Not on the UI thread; iOS must be off (refusal).
-     * Throws an IOException with a plain message when it did not work; the disk is then as it was, or has a
-     * half-placed app that the next try replaces.
+     * Throws an IOException with a plain message when it did not work; the disk is then as it was (a staging
+     * folder a cut job left is taken away by the next try).
      */
     static Result install(Context c, InputStream in, long total, String name, Progress p, BooleanSupplier cancelled)
             throws IOException {
@@ -192,6 +196,7 @@ final class Ipa26 {
             }
             files.put("phone/ipa-place.py", asset(c, "setup/phone/ipa-place.py"));
             files.put("phone/ipa-hashes.py", asset(c, "setup/phone/ipa-hashes.py"));
+            files.put("phone/adhoc.py", asset(c, "setup/phone/adhoc.py"));
             files.put("base.tc", base);
             File inTar = new File(jd, "in.tar"), outRaw = new File(jd, "out.raw");
             TarIo.write(inTar, files);
@@ -226,7 +231,7 @@ final class Ipa26 {
                 if (r.rc != 0 && fail[0] == null && Helper.worthRetry(r, Helper.FLOOR_WORK_IN_RAM) && !cancelled.getAsBoolean()) {
                     int ram = Helper.retryRam(r, Helper.FLOOR_WORK_IN_RAM);
                     AppLog.note(c, "ipa26: the helper VM failed (" + r.failure() + ", " + r.how() + "); again under TCG with " + ram + " MiB");
-                    res.noSignature.clear();
+                    res.signed.clear();
                     res.warnings.clear();
                     r = Helper.run(c, "run", disks, cpus, jd, l, cancelled, false, ram);
                 }
@@ -258,8 +263,8 @@ final class Ipa26 {
             remember(c, res.app);
             res.seconds = (System.currentTimeMillis() - t0) / 1000;
             AppLog.note(c, "ipa26: " + (name == null ? "?" : name) + " -> " + res.app + " (" + res.bundleId + ") on " + disk.getName()
-                    + (res.replaced.isEmpty() ? res.isNew ? ", new" : ", replaced" : ", replaced " + res.replaced + (res.isNew ? ", other id" : "")) + ", get-task-allow off in " + res.noget + " file(s), no usable signature: "
-                    + res.noSignature + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
+                    + (res.replaced.isEmpty() ? res.isNew ? ", new" : ", replaced" : ", replaced " + res.replaced + (res.isNew ? ", other id" : "")) + ", get-task-allow off in " + res.noget + " file(s), signed ad hoc: "
+                    + res.signed + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
             Installer.deleteTree(jd);
             return res;
         } finally {
@@ -287,8 +292,10 @@ final class Ipa26 {
             } catch (NumberFormatException ignored) {
                 // not a number: none counted
             }
-        } else if (t.startsWith("ipa-nosig ")) {
-            res.noSignature.add(t.substring(10));
+        } else if (t.startsWith("ipa-signed ")) {
+            // "PATH REASON" (REASON: unsigned, SHA-1_only, its_code_pages_do_not_match_its_signature)
+            String[] a = t.substring(11).split(" ", 2);
+            res.signed.add(a[0] + (a.length > 1 ? " (" + a[1].replace('_', ' ') + ")" : ""));
         } else if (t.startsWith("ipa-warn ")) {
             res.warnings.add(t.substring(9));
         } else if (t.startsWith("ipa-fail ")) {
@@ -348,11 +355,12 @@ final class Ipa26 {
         if (r.noget > 0) {
             s.append("\nThis app was signed for development: that was switched off so iOS 26 lets it run.");
         }
-        if (!r.noSignature.isEmpty()) {
-            s.append("\niOS 26 will refuse ").append(r.noSignature.size()).append(r.noSignature.size() == 1 ? " file" : " files")
-                    .append(" of this app (no usable signature, for example an old SHA-1 one), so it may not start: ")
-                    .append(String.join(", ", r.noSignature.subList(0, Math.min(3, r.noSignature.size()))))
-                    .append(r.noSignature.size() > 3 ? ", ..." : "");
+        if (!r.signed.isEmpty()) {
+            // (what had no signature iOS 26 accepts was signed again here, so it is no reason for the app not to start)
+            s.append("\n").append(r.signed.size()).append(r.signed.size() == 1 ? " file" : " files")
+                    .append(" of this app had no usable signature and was signed again on this phone: ")
+                    .append(String.join(", ", r.signed.subList(0, Math.min(3, r.signed.size()))))
+                    .append(r.signed.size() > 3 ? ", ..." : "").append(".");
         }
         s.append("\nGo back to an older save would take the app away again.");
         return s.toString();

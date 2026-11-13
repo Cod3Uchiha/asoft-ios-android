@@ -31,4 +31,25 @@ public class Ipa26Test {
         r.app = "A.app";
         assertTrue(Ipa26.summary(r).startsWith("A.app is on iOS 26's disk."));
     }
+
+    @Test
+    public void signedFilesAreListedNotWarnedAbout() {
+        Ipa26.Result r = new Ipa26.Result();
+        String[] fail = {null};
+        Ipa26.line26("ipa-signed Frameworks/libX.dylib SHA-1_only", r, fail);
+        Ipa26.line26("ipa-signed Frameworks/U.framework/U its_code_pages_do_not_match_its_signature", r, fail);
+        r.app = "A.app";
+        String text = Ipa26.summary(r);
+        assertTrue(text.contains("2 files of this app had no usable signature and was signed again on this phone: "
+                + "Frameworks/libX.dylib (SHA-1 only), Frameworks/U.framework/U (its code pages do not match its signature)."));
+        assertTrue(!text.contains("will refuse"));
+    }
+
+    @Test
+    public void unsignableFileFailsWithItsName() {
+        Ipa26.Result r = new Ipa26.Result();
+        String[] fail = {null};
+        Ipa26.line26("ipa-fail Frameworks/libX.dylib: cannot be given a signature iOS 26 accepts: it is still encrypted", r, fail);
+        assertTrue(fail[0].startsWith("Frameworks/libX.dylib: cannot be given"));
+    }
 }

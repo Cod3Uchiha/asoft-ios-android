@@ -11,6 +11,10 @@ an earlier placing here leaves) and an Info.plist (binary or XML) that names a C
 or cannot be read. An unmarked third-party app (put there by hand, or by a placing before the mark existed) is replaced
 like a marked one and gets the mark. It counts as NEW for LaunchServices (ipa-new 1) unless the old and the new
 CFBundleIdentifier are equal; "ASOFT: ipa-replaced NAME OLDID OLDVERSION" says what was replaced.
+The new app is made in a staging folder (ROOT/Applications/.asoft-stage/NAME.app); the app that is there is only
+replaced by "ipa-place.py --swap ROOT NAME" once the job has prepared the new one completely (signatures, trust cache),
+and "ipa-place.py --drop ROOT" takes the staging folder away. A job that fails anywhere before the swap leaves the disk
+as it was.
 Refused with a plain message: no Payload/*.app, a name that leaves the app folder, not enough room on the disk.
 """
 import os
@@ -46,7 +50,40 @@ def read_plist(path):
         return None
 
 
+STAGE = '.asoft-stage'
+
+
+def swap(root, app):
+    """The staged app takes the place of the one that is there: the old one is moved aside first, so a failure
+    between the two renames still leaves a whole app, then it goes."""
+    apps = os.path.join(root, 'Applications')
+    stage = os.path.join(apps, STAGE)
+    new, final, old = os.path.join(stage, app), os.path.join(apps, app), os.path.join(stage, 'old-' + app)
+    if not os.path.isdir(new):
+        fail('the prepared app is not there to put in place')
+    if os.path.lexists(final):
+        os.rename(final, old)
+    os.rename(new, final)
+    shutil.rmtree(stage)
+
+
+def recover(root):
+    """A swap that was cut between its two renames left the old app in the staging folder: it comes back first."""
+    apps = os.path.join(root, 'Applications')
+    stage = os.path.join(apps, STAGE)
+    if os.path.isdir(stage):
+        for n in os.listdir(stage):
+            if n.startswith('old-') and not os.path.lexists(os.path.join(apps, n[4:])):
+                os.rename(os.path.join(stage, n), os.path.join(apps, n[4:]))
+
+
 def main():
+    if len(sys.argv) > 3 and sys.argv[1] == '--swap':
+        swap(sys.argv[2], sys.argv[3])
+        return
+    if len(sys.argv) > 2 and sys.argv[1] == '--drop':
+        shutil.rmtree(os.path.join(sys.argv[2], 'Applications', STAGE), ignore_errors=True)
+        return
     ipa, root = sys.argv[1], sys.argv[2]
     ipa_name = sys.argv[3] if len(sys.argv) > 3 else ''
     try:
@@ -81,6 +118,7 @@ def main():
             bundle_id = ''
     print('ASOFT: ipa-app %s %s' % (app, bundle_id or '?'))
 
+    recover(root)
     dst = os.path.join(root, 'Applications', app)
     new = 1
     if os.path.lexists(dst):
@@ -98,10 +136,12 @@ def main():
     print('ASOFT: ipa-new %d' % new)
     with open('/work/ipa.new', 'w') as f:
         f.write(str(new))
-    if os.path.lexists(dst):
-        shutil.rmtree(dst)
-    partial.append(dst)
-    # the mark first: a placing that dies half way leaves a folder a retry may replace
+    # (a staging folder an earlier job left goes; the app that is there stays until the swap)
+    stage = os.path.join(root, 'Applications', STAGE)
+    shutil.rmtree(stage, ignore_errors=True)
+    dst = os.path.join(stage, app)
+    partial.append(stage)
+    # the mark first
     os.makedirs(dst)
     with open(os.path.join(dst, MARK), 'w') as f:
         f.write(ipa_name + '\n')
