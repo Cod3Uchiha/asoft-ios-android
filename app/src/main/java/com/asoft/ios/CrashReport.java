@@ -886,6 +886,9 @@ final class CrashReport {
         }, "share-log").start();
     }
 
+    /** Closes a shared text: without it at the end of what arrived, the receiver cut the text (Share as a file then). */
+    static final String END_MARK = "\n--- end of the log (if this line is missing, it was cut: use Share as a file) ---\n";
+
     /** The share sheet with @text (already scrubbed) about @subject. */
     static void share(Activity a, String subject, String text) {
         if (a.isFinishing() || a.isDestroyed()) {
@@ -893,7 +896,46 @@ final class CrashReport {
         }
         a.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(Intent.EXTRA_SUBJECT, "ASoftware iOS: " + subject)
-                .putExtra(Intent.EXTRA_TEXT, text), "Share the log"));
+                .putExtra(Intent.EXTRA_TEXT, text + END_MARK), "Share the log"));
+    }
+
+    /**
+     * The share sheet with @text as a .txt file: where a text would be cut (a chat's or a paste site's limit keeps its
+     * start, and a log's end is what matters). The older files of cache/share go first.
+     */
+    static void shareFile(Activity a, String subject, String text) {
+        new Thread(() -> {
+            File d = ShareProvider.dir(a);
+            File[] old = d.listFiles();
+            if (old != null) {
+                for (File f : old) {
+                    f.delete();
+                }
+            }
+            File f = new File(d, "asoftware-log-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT)
+                    .format(new java.util.Date()) + ".txt");
+            try {
+                if (!d.isDirectory() && !d.mkdirs()) {
+                    throw new IOException("cannot make " + d);
+                }
+                java.nio.file.Files.write(f.toPath(), text.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                a.runOnUiThread(() -> Toast.makeText(a, "The file was not written: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                return;
+            }
+            a.runOnUiThread(() -> {
+                if (a.isFinishing() || a.isDestroyed()) {
+                    return;
+                }
+                Uri u = ShareProvider.uri(a, f);
+                Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(Intent.EXTRA_SUBJECT, "ASoftware iOS: " + subject)
+                        .putExtra(Intent.EXTRA_STREAM, u)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                send.setClipData(ClipData.newRawUri(f.getName(), u));
+                a.startActivity(Intent.createChooser(send, "Share the log as a file"));
+            });
+        }, "share-file").start();
     }
 
     /** The report of @r, as it would go to GitHub, with the ways to send it on (none of them sends anything itself). */

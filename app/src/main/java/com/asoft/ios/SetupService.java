@@ -224,6 +224,20 @@ public class SetupService extends Service {
         unmetered = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
     }
 
+    /**
+     * Reads the real state, the way watchNetwork() does at its start: a callback that never came (the wait
+     * would not end) is made up for. It only ever turns "offline" or "metered" into what the system reports now.
+     */
+    private void recheckNetwork() {
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        Network active = cm.getActiveNetwork();
+        NetworkCapabilities caps = active == null ? null : cm.getNetworkCapabilities(active);
+        if (caps != null) {
+            online = true;
+            unmetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+        }
+    }
+
     /** Still downloading: nothing after the download needs the network. */
     private boolean downloadLeft() {
         if ("a26".equals(state.target)) {
@@ -292,14 +306,44 @@ public class SetupService extends Service {
             AppExit.begin(this, AppExit.SETUP, setupName(a26) + " was running");
             AppLog.note(this, "setup: start (" + getFilesDir().getUsableSpace() / 1_000_000_000L + " GB free)");
             try {
+                // what the wait below last told the log and the notification: "", "net" or "wifi"
+                String waitShown = "";
+                long netSince = 0, lastRecheck = System.currentTimeMillis();
                 while (!cancel) {
                     // paused, or waiting for Wi-Fi: what is done stays done, the run goes on from it
                     while (!cancel && (pause || noWifi() || noNetwork())) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastRecheck >= 60_000) {
+                            // a missed callback must not keep the wait going for good
+                            lastRecheck = now;
+                            recheckNetwork();
+                        }
                         state.paused = true;
                         state.waitingForWifi = !pause && noWifi();
                         state.waitingForNetwork = !pause && noNetwork();
+                        String kind = state.waitingForNetwork ? "net" : state.waitingForWifi ? "wifi" : "";
+                        if (!kind.equals(waitShown)) {
+                            if ("net".equals(kind)) {
+                                netSince = now;
+                                AppLog.note(this, "setup: waiting for a network");
+                            } else if ("net".equals(waitShown)) {
+                                AppLog.note(this, "setup: the network is back after " + (now - netSince) / 60_000 + " min");
+                            }
+                            if (!kind.isEmpty()) {
+                                // (the fetcher posts nothing while this loop waits; the same wording as the screens)
+                                post("net".equals(kind) ? "Waiting for a network" : "Waiting for Wi-Fi (Download on Wi-Fi only is on)", state.pct);
+                            }
+                            waitShown = kind;
+                        }
                         Thread.sleep(1000);
                     }
+                    if ("net".equals(waitShown) && !cancel) {
+                        AppLog.note(this, "setup: the network is back after " + (System.currentTimeMillis() - netSince) / 60_000 + " min");
+                    }
+                    if (!waitShown.isEmpty() && !cancel) {
+                        post(state.text.isEmpty() ? "Starting" : state.text, state.pct);
+                    }
+                    waitShown = "";
                     state.paused = false;
                     state.waitingForWifi = false;
                     state.waitingForNetwork = false;

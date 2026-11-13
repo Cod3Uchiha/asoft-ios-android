@@ -227,7 +227,7 @@ final class Setup26Screen {
         }
         PhoneSetup26.setWants(a, i26, w);
         error.setText("");
-        SetupService.startA26(a);
+        Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.startA26(a));
     }
 
     private void runCheck() {

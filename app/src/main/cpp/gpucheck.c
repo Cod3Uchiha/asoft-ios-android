@@ -831,7 +831,10 @@ static int check(const char *loader)
         {"geometryShader", f->geometryShader, 0},
         {"tessellationShader", f->tessellationShader, 0},
         {"robustBufferAccess", f->robustBufferAccess, 0},
-        {"storageBuffer16BitAccess", f11.storageBuffer16BitAccess, 1},
+        /* not required, same as the 8-bit one below: without it metal2vulkan declares no u16[] view and moves
+           halves and shorts through its word views (memory/leaf.rs Units::storage_on); Turnip has none on the
+           a6xx gen1/gen2 Adrenos such as the 640 */
+        {"storageBuffer16BitAccess", f11.storageBuffer16BitAccess, 0},
         {"uniformAndStorageBuffer16BitAccess", f11.uniformAndStorageBuffer16BitAccess, 0},
         {"multiview", f11.multiview, 0},
         {"samplerYcbcrConversion", f11.samplerYcbcrConversion, 0},

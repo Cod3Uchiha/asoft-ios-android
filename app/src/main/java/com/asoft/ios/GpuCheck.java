@@ -164,6 +164,22 @@ final class GpuCheck {
                 && tests.containsAll(java.util.Arrays.asList("compute", "render", "host memory"));
     }
 
+    /** {@link #fallbackPass} for the lines of one Turnip log (gpucheck.c's "lacks:", "test:" and "missing:" lines). */
+    static boolean fallbackPassOfLog(List<String> turnipLines) {
+        List<String> lacks = new ArrayList<>(), tests = new ArrayList<>();
+        boolean probeEnded = false;
+        for (String l : turnipLines) {
+            if (l.startsWith("lacks: ")) {
+                lacks.add(l.substring(7));
+            } else if (l.startsWith("missing: ")) {
+                probeEnded = true;
+            } else if (l.startsWith("test: ")) {
+                tests.add(l.substring(6));
+            }
+        }
+        return fallbackPass(lacks, tests, probeEnded);
+    }
+
     /** A lack that rules this phone out with its current driver, in plain words, or null. */
     private static String fatal(String lack) {
         if (lack.startsWith("Vulkan 1.2")) {
@@ -435,9 +451,8 @@ final class GpuCheck {
         rep.append("date: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT).format(new java.util.Date())).append('\n');
         String gpu = "", driver = "";
         List<String> sysLines = new ArrayList<>();
-        // Turnip's own lacks and tests, for the compatibility mode (fallbackPass)
-        List<String> lacks = new ArrayList<>(), tests = new ArrayList<>();
-        boolean probeEnded = false;
+        // Turnip's own log lines, for the compatibility mode (fallbackPassOfLog)
+        List<String> turnipLines = new ArrayList<>();
         for (String which : new String[] {"turnip", "system"}) {
             File log = new File(d, which + ".log");
             if (!log.isFile()) {
@@ -455,15 +470,11 @@ final class GpuCheck {
                         }
                         continue;
                     }
+                    turnipLines.add(l);
                     if (l.startsWith("result: ")) {
                         r.pass = l.endsWith("pass");
                     } else if (l.startsWith("lacks: ")) {
                         r.missing.add(l.substring(7));
-                        lacks.add(l.substring(7));
-                    } else if (l.startsWith("missing: ")) {
-                        probeEnded = true;      // the probe's own end (gpucheck.c), not a crash or a timeout
-                    } else if (l.startsWith("test: ")) {
-                        tests.add(l.substring(6));
                     } else if (l.startsWith("gpu: ")) {
                         gpu = l.substring(5);
                     } else if (l.startsWith("driver: ")) {
@@ -476,7 +487,7 @@ final class GpuCheck {
                 rep.append("(cannot read: ").append(e.getMessage()).append(")\n");
             }
         }
-        if (r.ran && !r.pass && adreno() && !turnipOff(c) && fallbackPass(lacks, tests, probeEnded)) {
+        if (r.ran && !r.pass && adreno() && !turnipOff(c) && fallbackPassOfLog(turnipLines)) {
             r.pass = true;
             r.nosparse = true;
         }

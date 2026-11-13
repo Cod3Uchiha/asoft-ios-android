@@ -1650,14 +1650,18 @@ final class Guest {
             return String.format(java.util.Locale.ROOT, "the phone's storage is full (%.1f GB free). Free some space,"
                     + " then start it again: its disk and saves are kept.", c.getFilesDir().getUsableSpace() / 1e9);
         }
-        if (tail.contains("reims-vgpu: fatal")) {
+        String why = lastWords(c);
+        // before the generic reims fatal below: running out of mappings is itself a "reims-vgpu: fatal" line
+        // ("platform call mmap: the library's views of memory ran out of kernel mappings ... max_map_count")
+        boolean mappings = tail.contains("max_map_count") || tail.contains("kernel mappings")
+                || why.contains("max_map_count") || why.contains("kernel mappings");
+        if (!mappings && tail.contains("reims-vgpu: fatal")) {
             // metal2vulkan met something it does not translate yet (2026-11-07: a compute kernel's texture
             // format on the watch) and reims ends QEMU rather than draw wrong
             return "its graphics asked the phone's GPU for something this version cannot do yet. Start it again:"
                     + " its disk and saves are kept.";
         }
-        String why = lastWords(c);
-        if (why.contains("max_map_count") || why.contains("kernel mappings")) {
+        if (mappings) {
             // reims' views of iOS's graphics memory take a mapping per 16 KiB page: Android allows an app
             // 65,530 (APK-PLAN §6.19)
             return "its graphics memory used up the 65,530 memory mappings Android gives an app (a known limit"
@@ -2245,6 +2249,42 @@ final class Guest {
         track(os, sb != null, resumed ? "the save " + loadTag : "a boot", logAt, smp, bootRamMiB, fb26W + "x" + fb26H,
                 Emu.qemu26Path(c));
         connectQmp(c, pid);
+        if (compat26) {
+            watchMappings(c.getApplicationContext(), pid);
+        }
+    }
+
+    /**
+     * The compatibility mode's QEMU holds a kernel mapping per view of iOS's graphics memory, and reims ends it at
+     * its budget under Android's 65,530 (a setup's DataMigration boot did after 72 minutes, 2026-11-12). The log
+     * gets the count once a minute's reading passes another 5,000, so a record's app log shows how fast it filled.
+     */
+    private static void watchMappings(Context app, int qemu) {
+        Thread t = new Thread(() -> {
+            long started = System.currentTimeMillis();
+            int told = 0;
+            while (Render.alive(qemu)) {
+                int n = 0;
+                try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/" + qemu + "/maps"), 1 << 16)) {
+                    while (r.readLine() != null) {
+                        n++;
+                    }
+                } catch (IOException e) {
+                    return;
+                }
+                if (n / 5000 > told) {
+                    told = n / 5000;
+                    AppLog.note(app, "gpu: " + n + " memory mappings after " + (System.currentTimeMillis() - started) / 60_000 + " min");
+                }
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }, "mappings");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**
