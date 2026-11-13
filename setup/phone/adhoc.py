@@ -19,6 +19,9 @@ blob. The old identifier stays. Exception: a library (not MH_EXECUTE) is signed 
 gets its entitlements from its main executable only, so a library's are never used, and AMFI refuses a library whose
 signature claims restricted ones (platform-application, com.apple.private.*, task_for_pid-allow ...): the one file of
 Angry Birds 2 that dyld rejected (iGameGod) was the only one of its 35 Mach-Os that carried them. `--keep-library-entitlements` turns that off.
+`--add-exec-entitlement KEY` (repeatable) adds KEY = true to the entitlements of every main executable (MH_EXECUTE) it signs
+(XML and DER, special slots 5 and 7 hashed again); nothing adds one by default (a test knob: the iOS 26 kernel lets a task
+whose own entitlements hold com.apple.private.set-exception-port register exception ports as it likes).
 Prints "signed REL REASON CDHASH [CDHASH ...]" per file (CDHash = first 20 bytes of the directory's SHA-256).
 
 Fat files are handled per slice: every 64-bit slice (arm64 and arm64e alike) is checked and, when needed, re-signed in
@@ -255,7 +258,7 @@ class Context:
                 pass
 
 
-def sign_slice(m, ctx, keep_library_entitlements=False):
+def sign_slice(m, ctx, keep_library_entitlements=False, add_exec_entitlements=()):
     """The slice @m (a bytes-like 64-bit Mach-O) with a new ad-hoc signature: (new bytearray, CDHash hex, number of
     entitlements left out). A library's entitlements are left out unless @keep_library_entitlements (see the module text)."""
     info = Info(m)
@@ -303,6 +306,15 @@ def sign_slice(m, ctx, keep_library_entitlements=False):
         except Exception:
             dropped = 1
         ents_xml = ents_der = None
+    if add_exec_entitlements and info.filetype == MH_EXECUTE:
+        try:
+            ents = plistlib.loads(ents_xml[8:]) if ents_xml is not None else {}
+        except Exception as e:
+            raise Unsupported('its entitlements do not parse (%s)' % e)
+        for k in add_exec_entitlements:
+            ents[k] = True
+        ents_xml = blob(CSMAGIC_ENTITLEMENTS, plistlib.dumps(ents, fmt=plistlib.FMT_XML))
+        ents_der = None                 # made again from the new XML below
     if ents_xml is not None and ents_der is None:
         try:
             ents = plistlib.loads(ents_xml[8:])
@@ -363,7 +375,7 @@ def sign_slice(m, ctx, keep_library_entitlements=False):
     return b, hashlib.sha256(bytes(cd)).hexdigest()[:40], dropped
 
 
-def resign(path, app=None, keep_library_entitlements=False):
+def resign(path, app=None, keep_library_entitlements=False, add_exec_entitlements=()):
     """Signs every 64-bit slice of the Mach-O @path ad hoc, in place. Returns [] when it is no Mach-O or has no 64-bit
     slice, else [(why it needed it, [CDHash, ...], entitlements left out)] (one entry per file). Raises Unsupported."""
     with open(path, 'rb') as f:
@@ -377,7 +389,7 @@ def resign(path, app=None, keep_library_entitlements=False):
         if not is_64(buf, 0):
             return []
         why = usable(buf)[1] or 'a signature from elsewhere'
-        new, h, dropped = sign_slice(buf, ctx, keep_library_entitlements)
+        new, h, dropped = sign_slice(buf, ctx, keep_library_entitlements, add_exec_entitlements)
         write(path, new)
         return [(why, [h], dropped)]
     parts, hashes, reasons, dropped = [], [], [], 0
@@ -385,7 +397,7 @@ def resign(path, app=None, keep_library_entitlements=False):
         sl = buf[off:off + size]
         if is_64(sl, 0):
             reasons.append(usable(sl)[1] or 'a signature from elsewhere')
-            new, h, d = sign_slice(sl, ctx, keep_library_entitlements)
+            new, h, d = sign_slice(sl, ctx, keep_library_entitlements, add_exec_entitlements)
             sl = bytes(new)
             hashes.append(h)
             dropped += d
@@ -442,7 +454,8 @@ def machos(app):
 
 def main(argv):
     check = '--check' in argv
-    args = [a for a in argv if not a.startswith('--') or a == '--file']
+    skip = {argv[i + 1] for i, a in enumerate(argv) if a == '--add-exec-entitlement' and i + 1 < len(argv)}
+    args = [a for a in argv if (not a.startswith('--') or a == '--file') and a not in skip]
     if args and args[0] == '--file':
         files, app = [args[1]], (args[2] if len(args) > 2 else os.path.dirname(args[1]))
     elif args:
@@ -470,7 +483,8 @@ def main(argv):
                         print('unusable %s: %s' % (rel, why))
                         bad += 1
             else:
-                for why, hashes, dropped in resign(p, app, '--keep-library-entitlements' in argv):
+                add = [argv[i + 1] for i, a in enumerate(argv) if a == '--add-exec-entitlement' and i + 1 < len(argv)]
+                for why, hashes, dropped in resign(p, app, '--keep-library-entitlements' in argv, add):
                     print('signed %s %s %s%s' % (rel, why.replace(' ', '_'), ' '.join(hashes),
                                                  ' (%d entitlements of a library left out)' % dropped if dropped else ''))
         except (Unsupported, struct.error, OSError) as e:

@@ -218,6 +218,30 @@ p = put('a/lib-keep.dylib', signed(2, ents=rest))
 adhoc.resign(p, tmp, keep_library_entitlements=True)
 check('library: --keep-library-entitlements keeps them', blob_at(read(p), 5) is not None and blob_at(read(p), 7) is not None)
 
+# -- --add-exec-entitlement: only a main executable gets the key (XML and DER, slots 5 and 7 hashed again), nothing by default
+KEY = 'com.apple.private.set-exception-port'
+base_ents = plistlib.dumps({'application-identifier': 'T.app'}, fmt=plistlib.FMT_XML)
+p = put('a/exe-add', signed(2, ents=base_ents, filetype=2))
+adhoc.resign(p, tmp, add_exec_entitlements=[KEY])
+m = read(p)
+x = plistlib.loads(blob_at(m, 5)[8:])
+cd0 = blob_at(m, 0)
+hoff = struct.unpack_from('>I', cd0, 16)[0]
+check('exec entitlement added: XML has both keys, DER blob made, slots 5 and 7 match their blobs',
+      x == {'application-identifier': 'T.app', KEY: True} and blob_at(m, 7) is not None
+      and cd0[hoff - 32 * 5:hoff - 32 * 4] == hashlib.sha256(blob_at(m, 5)).digest()
+      and cd0[hoff - 32 * 7:hoff - 32 * 6] == hashlib.sha256(blob_at(m, 7)).digest()
+      and KEY.encode() in blob_at(m, 7) and slice_state(m)[:2] == (True, True))
+p = put('a/exe-none', signed(2, ents=base_ents, filetype=2))
+adhoc.resign(p, tmp)
+check('exec entitlement: none added by default', plistlib.loads(blob_at(read(p), 5)[8:]) == {'application-identifier': 'T.app'})
+p = put('a/lib-noadd.dylib', signed(2, ents=base_ents))
+adhoc.resign(p, tmp, add_exec_entitlements=[KEY])
+check('exec entitlement: a library gets none', blob_at(read(p), 5) is None)
+p = put('a/exe-noents', signed(2, filetype=2))
+adhoc.resign(p, tmp, add_exec_entitlements=[KEY])
+check('exec entitlement: an executable without any gets just it', plistlib.loads(blob_at(read(p), 5)[8:]) == {KEY: True})
+
 # -- bad pages: a SHA-256 signature whose code pages no longer match (a decrypted binary)
 good = bytearray(signed(2))
 check('a matching SHA-256 file reads as usable', adhoc.usable(bytes(good))[0])
@@ -349,6 +373,14 @@ if ab2:
               r and has and ok and r[0][1] == [h] and len(cds) == 1 and cds[0][1] == 2)
         if adhoc.Info(after).filetype == 2:
             check('   the executable keeps its entitlements byte for byte', blob_at(after, 5) == ents_before)
+            # the same file again with the entitlement the kernel honours for exception ports added
+            shutil.copy(src, dst)
+            adhoc.resign(dst, os.path.join(tmp, 'ab2'), add_exec_entitlements=[KEY])
+            with_key = read(dst)
+            old = plistlib.loads(ents_before[8:])
+            new = plistlib.loads(blob_at(with_key, 5)[8:])
+            check('   with --add-exec-entitlement: its %d entitlements plus %s, DER present, all pages match' % (len(old), KEY),
+                  new == dict(old, **{KEY: True}) and blob_at(with_key, 7) is not None and slice_state(with_key)[:2] == (True, True))
         elif ents_before:
             check('   the library\'s %d entitlements are left out' % r[0][2], blob_at(after, 5) is None and blob_at(after, 7) is None and r[0][2] > 0)
         hdr_end = 32 + adhoc.Info(before).sizeofcmds

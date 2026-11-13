@@ -1,4 +1,4 @@
-"""ipa-hashes.py SCRIPTS APP OUT: the CDHashes of every Mach-O of an app for the trust cache, after making each usable.
+"""ipa-hashes.py SCRIPTS APP OUT [ENTS]: the CDHashes of every Mach-O of an app for the trust cache, after making each usable.
 
 SCRIPTS is the folder with cdhash.py (the PC installer's), APP the staged .app, OUT the list (one 40-digit hash a
 line, the form mktc.py reads). Every 64-bit slice is first signed ad hoc with one SHA-256 code directory of our own (adhoc.py, next to this file; a
@@ -13,6 +13,11 @@ import struct
 import sys
 
 scripts, app, out = sys.argv[1], sys.argv[2], sys.argv[3]
+# ENTS (optional): a file, one entitlement a line, that every main executable gets as true (a test knob, see adhoc.py)
+add_ents = []
+if len(sys.argv) > 4 and os.path.isfile(sys.argv[4]):
+    with open(sys.argv[4]) as f:
+        add_ents = [l.strip() for l in f if l.strip()]
 sys.path.insert(0, scripts)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adhoc  # noqa: E402  (next to this file)
@@ -29,7 +34,7 @@ machos = 0
 for p in adhoc.machos(app):
     rel = os.path.relpath(p, app)
     try:
-        for why, got, dropped in adhoc.resign(p, app):
+        for why, got, dropped in adhoc.resign(p, app, add_exec_entitlements=add_ents):
             print('ASOFT: ipa-signed %s %s' % (rel, why.replace(' ', '_')))
             if dropped:
                 print('ASOFT: ipa-ents-dropped %s %d' % (rel, dropped))

@@ -199,6 +199,11 @@ final class Ipa26 {
             files.put("phone/ipa-place.py", asset(c, "setup/phone/ipa-place.py"));
             files.put("phone/ipa-hashes.py", asset(c, "setup/phone/ipa-hashes.py"));
             files.put("phone/adhoc.py", asset(c, "setup/phone/adhoc.py"));
+            // debug builds: ios26.txt lines "ipa-ent=KEY" add KEY = true to the app's main executable (a test of the exception-port rule)
+            String ents = Guest.ipaEntitlements(c);
+            if (!ents.isEmpty()) {
+                files.put("ipa.ents", ents);
+            }
             files.put("base.tc", base);
             File inTar = new File(jd, "in.tar"), outRaw = new File(jd, "out.raw");
             TarIo.write(inTar, files);

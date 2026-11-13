@@ -24,7 +24,7 @@ python3 -I $S/noget.py "$DST" > $A/noget.txt || true
 echo "ASOFT: ipa-noget $(grep -c '^get-task-allow off' $A/noget.txt || true)"
 grep '^FAILED' $A/noget.txt | sed 's/^/ASOFT: ipa-warn /' || true
 # every slice gets a SHA-256 code directory that matches its pages (adhoc.py), then its CDHash
-python3 -I $A/phone/ipa-hashes.py $S "$DST" $A/ipa.hashes || { rc=$?; undo; exit $rc; }
+python3 -I $A/phone/ipa-hashes.py $S "$DST" $A/ipa.hashes $A/ipa.ents || { rc=$?; undo; exit $rc; }
 if [ ! -s $A/ipa.hashes ]; then
 	echo "ASOFT: ipa-fail no file of this app has a signature iOS 26 can use"
 	undo

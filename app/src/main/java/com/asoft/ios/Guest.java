@@ -1942,6 +1942,25 @@ final class Guest {
         return lastOverrides26;
     }
 
+    /** Debug builds: the "ipa-ent=KEY" lines of ios26.txt, one KEY a line (Ipa26 gives them to the job); "" in release builds. */
+    static String ipaEntitlements(Context c) {
+        StringBuilder b = new StringBuilder();
+        if ((c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            return "";
+        }
+        try {
+            for (String l : java.nio.file.Files.readAllLines(new File(c.getExternalFilesDir(null), "ios26.txt").toPath())) {
+                l = l.trim();
+                if (l.startsWith("ipa-ent=") && l.length() > 8) {
+                    b.append(l.substring(8)).append((char) 10);
+                }
+            }
+        } catch (IOException ignored) {
+            // no test file
+        }
+        return b.toString();
+    }
+
     private static Map<String, String> overrides26(Context c, List<String> args) {
         Map<String, String> m = new java.util.LinkedHashMap<>();
         if ((c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
@@ -2151,7 +2170,9 @@ final class Guest {
                 "-txm", (sb != null ? sb.txm : watch ? WatchProfile.part(c, "txm") : new File(g, "txm")).getPath(), "-dtree", dtree,
                 "-tc", tc, "-ramdisk", (sb != null ? sb.ramdisk : watch ? WatchProfile.part(c, "rd-shell.hfs") : new File(g, "rd-shell.hfs")).getPath(),
                 "-args", "serial=3 -v debug=0x14e cpus=" + smp + " rd=disk0s1 wdt=-1 keepsyms=1 -noprogress "
-                        + "launchd_unsecure_cache=1 launchd_disable_all_timeouts=1 aks-endpoint=0 cpu_boot_timeout_secs=30",
+                        + "launchd_unsecure_cache=1 launchd_disable_all_timeouts=1 aks-endpoint=0 cpu_boot_timeout_secs=30"
+                        // ios26.txt bootargs=... (debug builds): more boot-args for one start; a save keeps the ones it booted with
+                        + (ov.containsKey("bootargs") ? " " + ov.get("bootargs") : ""),
                 "-display", "none", "-monitor", "none", "-parallel", "none",
                 // the guest's root shell (bash on the serial console) on files/run/console.sock, still logged to
                 // serial.txt: the setup's commands, Turn off's sync (powerOff), and adb (run-as + toybox nc -U). With no
