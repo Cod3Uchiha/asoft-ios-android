@@ -96,6 +96,18 @@ final class RunStats {
         return b.toString();
     }
 
+    /**
+     * The RAM in MiB the started guest really has: iOS 16 runs with its fixed 7 GiB (Guest.RAM_SIZE; it has no
+     * choice and Guest.ramMiB only knows iOS 26's and the watch's), the others with what they booted or loaded
+     * with (@booted, Guest.bootRamMiB; 0 when unknown), else the size chosen for them (@chosen).
+     */
+    static int startRam(int os, int booted, int chosen) {
+        if (os == Guest.IOS16) {
+            return (int) (Guest.RAM_SIZE >> 20);
+        }
+        return booted > 0 ? booted : chosen;
+    }
+
     /** The start of QEMU @p; @t0Ms is SystemClock.elapsedRealtime() taken just before it was spawned. */
     static void start(Context c, int p, int os, boolean resumed, long t0Ms) {
         Context a = c.getApplicationContext();
@@ -109,7 +121,7 @@ final class RunStats {
             periodViewMs = 0;
         }
         AppLog.note(a, "run: " + Guest.osName(os) + " " + (resumed ? "quick-save load" : "cold boot") + ", "
-                + Guest.ramMiB(a, os) + " MiB, cpuset " + cpus(p) + ", MemAvailable " + availMb() + " MB, thermal "
+                + startRam(os, Guest.bootRamMiB(), os == Guest.IOS16 ? 0 : Guest.ramMiB(a, os)) + " MiB, cpuset " + cpus(p) + ", MemAvailable " + availMb() + " MB, thermal "
                 + CrashReport.thermal(a));
         Thread t = new Thread(() -> watch(a, p), "run-stats");
         t.setDaemon(true);
