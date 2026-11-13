@@ -191,6 +191,28 @@ final class GpuCheck {
         return null;
     }
 
+    /** What a phone without Turnip lacks that the engine's Metal translation needs for iOS 26's blends (and cannot do without). */
+    static final String FRAMEBUFFER_FETCH = "reading the framebuffer in a shader in drawing order (VK_EXT_rasterization_order_attachment_access"
+            + " or fragment shader interlock): the driver has neither, and iOS 26 needs one";
+
+    /**
+     * {@link #FRAMEBUFFER_FETCH} when the phone's own driver's log says both extensions are absent ("recommended,
+     * absent:" lines of gpucheck.c; they are not required lines, so the probe itself still passes: Samsung Xclipse
+     * 920 and 940 pass every test and have neither). metal2vulkan refuses a draw that reads the framebuffer without
+     * one of them, so a pass would boot iOS 26 into refused pipelines. Null when either is there or the log has no such lines.
+     */
+    static String framebufferFetchLack(List<String> sysLines) {
+        boolean noRaster = false, noInterlock = false;
+        for (String l : sysLines) {
+            if (l.equals("recommended, absent: VK_EXT_rasterization_order_attachment_access")) {
+                noRaster = true;
+            } else if (l.equals("recommended, absent: VK_EXT_fragment_shader_interlock")) {
+                noInterlock = true;
+            }
+        }
+        return noRaster && noInterlock ? FRAMEBUFFER_FETCH : null;
+    }
+
     /**
      * Sorts a failed check: will not run here (the phone's driver fails the basic tests, has no Vulkan 1.2 or no
      * descriptor indexing, or the phone has too little RAM), or not supported yet (it lacks only what our side could
@@ -263,6 +285,11 @@ final class GpuCheck {
             if (!r.why.contains(k)) {
                 r.why.add(k);
             }
+        }
+        // a driver that passes every test but cannot fetch the framebuffer: say why it is still "not supported yet"
+        String fetch = framebufferFetchLack(sysLines);
+        if (fetch != null && !r.never && !r.why.contains(fetch)) {
+            r.why.add(fetch);
         }
     }
 

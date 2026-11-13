@@ -2,8 +2,8 @@
 # iOS 26's part of the APK, into app/src/main/jniLibs26 (pull-libs.sh keeps jniLibs, iOS 16's):
 #   libqemu26.so                    the NDK build of qemu-sptm asoft-android with reims-vgpu + metal2vulkan
 #                                   (C:\asoft-build\android\wsl\13-qemu.sh in WSL ios-emu, debug info stripped)
-#   lib_libvulkan_freedreno.so.so   Mesa Turnip with VK_EXT_external_memory_host over KGSL (12-turnip.sh,
-#                                   turnip-host-pointer.diff): the stock Adreno driver lacks that extension
+#   lib_libvulkan_freedreno.so.so   Mesa Turnip with VK_EXT_external_memory_host over KGSL and the Adreno 825 entry (12-turnip.sh,
+#                                   turnip-host-pointer.diff, turnip-adreno825.diff): the stock Adreno driver lacks that extension
 #   lib_libvulkan.so.so             Termux's Khronos Vulkan loader (metal2vulkan dlopens libvulkan.so on
 #                                   Android; Guest.java points it at Turnip with VK_DRIVER_FILES)
 # QEMU's other libraries are iOS 16's (pull-libs.sh): the same Termux set.
