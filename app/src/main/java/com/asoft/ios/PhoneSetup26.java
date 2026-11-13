@@ -1017,8 +1017,12 @@ final class PhoneSetup26 {
     private static void saveBoot(Context c, GuestConsole con, File disk, String what) throws IOException {
         long t0 = System.currentTimeMillis();
         try {
+            // debug: files/setup/a26/phone/no-shell-sync ends every boot as if the shell had not answered (to try the
+            // end without it on a phone whose shell does answer)
+            boolean noShell = (c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                    && new File(work(c), "phone/no-shell-sync").isFile();
             // (reset: the shell's input line may hold the half of an earlier command)
-            if (con.run("sync", 180_000, 60_000, true) != null) {
+            if (!noShell && con.run("sync", 180_000, 60_000, true) != null) {
                 AppLog.note(c, "setup26: " + what + ": end of the boot through the shell: sync answered after "
                         + (System.currentTimeMillis() - t0) / 1000 + " s, quit");
                 endBoot(c, null);
