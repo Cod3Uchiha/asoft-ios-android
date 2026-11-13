@@ -489,8 +489,8 @@ final class Guest {
     }
 
     /**
-     * The guest's RAM in MiB, per OS, chosen in its menu on the home screen (iOS 26 3, 4 or 6 GiB; the watch 2 or 3 GiB). Unchosen:
-     * 4 / 3 GiB (the trees' own) on a phone with ~12 GB, 3 / 2 GiB on a smaller one (2 GiB slowed the watch's
+     * The guest's RAM in MiB, per OS, chosen in its menu on the home screen (iOS 26 3, 4 or 6 GiB; the watch 2 or 3 GiB). Unchosen
+     * (LowMemory.defaultGuestMiB): iOS 26 4 GiB on a phone from 14 GB, else 3 GiB; the watch 3 GiB from 10 GB, else 2 GiB (2 GiB slowed the watch's
      * cold Settings from 5.5 to 27 s but left ~1.3 GB more to Android, WATCHOS.md). A save always loads with
      * the RAM it was made with (savedRam), so a new size takes effect at the next full start.
      */
@@ -501,8 +501,7 @@ final class Guest {
     // of RAM. A save made below 5 GB keeps the old address, 0x1c0000000, so it still loads.
 
     static int ramDefault(Context c, int forOs) {
-        boolean small = GpuCheck.ram(c) < 10_000_000_000L;
-        return forOs == WATCH ? (small ? 2048 : 3072) : (small ? 3072 : 4096);
+        return LowMemory.defaultGuestMiB(GpuCheck.ram(c), forOs);
     }
 
     private static String ramKey(int forOs) {

@@ -219,7 +219,7 @@ final class Helper {
      * What a VM of @mib takes from the phone at most: its RAM, QEMU's translation cache (tbSizeMiB) and ~256 MB
      * of QEMU itself and the native engine's stubs.
      */
-    private static long needBytes(int mib) {
+    static long needBytes(int mib) {
         return ((long) mib + tbSizeMiB(mib) + 256) << 20;
     }
 

@@ -191,7 +191,9 @@ final class SetupScreen {
                 s.record = null;
                 s.error = "Close iOS first (side bar > Saves > Save and close): the setup needs its memory.";
             } else {
-                Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.start(a));
+                // (a helper VM of this phone's size takes memory too: say so when little is free, K5)
+                LowMemory.askBeforeStart(a, "the iOS 16 setup", Helper.needBytes(Helper.ramMiB(a, Helper.FLOOR_IOS16)),
+                        () -> Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.start(a)));
             }
         });
         cancel = new Button(a);
