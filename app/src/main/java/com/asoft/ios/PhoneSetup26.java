@@ -930,6 +930,11 @@ final class PhoneSetup26 {
         j.vars.put("POSTERBOARD", patchArgs(m, "posterBoard"));
         j.vars.put("LOCKLONGPRESS", patchArgs(m, "lockLongPress"));
         j.vars.put("AOD", patchArgs(m, "aod"));
+        // SystemAppMigrator stays out of the disk (root26-staged.py); debug: files/setup/a26/phone/keep-system-app-migrator
+        boolean keepSam = SystemAppMigrator.keep((c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0,
+                new File(work(c), "phone/" + SystemAppMigrator.KEEP_FLAG).isFile());
+        j.vars.put("KEEPSAM", keepSam ? "1" : "0");
+        AppLog.note(c, "setup26: apps: SystemAppMigrator " + (keepSam ? "stays in the disk (debug flag)" : "goes out of the disk"));
         String[] dsc = patchArgs(m, "files").split(" ");
         for (int i = 0; i < 3; i++) {
             j.vars.put("DSC" + i, dsc[i]);
@@ -1231,7 +1236,8 @@ final class PhoneSetup26 {
             AppLog.note(c, "setup26: UI after " + (System.currentTimeMillis() - t0) / 1000 + " s");
             String info = con.run("ls /System/Library/DataClassMigrators | tr '\\n' ' '; for f in /System/Library/DataClassMigrators/SpringBoard.migrator/Info.plist;"
                     + " do echo \" $f:\"; tr -c '[:print:]' ' ' < $f | tr -s ' ' | head -c 1500; done", 90_000, 60_000);
-            AppLog.note(c, "setup26: migrators: " + (info == null ? "(no answer)" : info.trim()));
+            SystemAppMigrator.State sam = SystemAppMigrator.state(info);
+            AppLog.note(c, "setup26: " + SystemAppMigrator.describe(sam) + "; migrators: " + (info == null ? "(no answer)" : info.trim()));
             long t1 = System.currentTimeMillis();
             long lastDiag = -1;
             boolean diagOff = false;
@@ -1254,7 +1260,7 @@ final class PhoneSetup26 {
                 mustRun(c, "DataMigration");
                 long min = (System.currentTimeMillis() - t1) / 60_000;
                 p.step("ios26:wallpaper", 15 + (int) Math.min(70, min * 70 / 60), min <= 75
-                        ? "DataMigration is setting iOS up (" + min + " min; on a PC about 50). The phone may get warm."
+                        ? "DataMigration is setting iOS up (" + min + " min; on a PC about " + SystemAppMigrator.pcMinutes(sam) + "). The phone may get warm."
                         : "DataMigration is taking longer than usual (" + min + " min; a phone needs about 60 to 75)."
                                 + " It can take up to two hours on a phone; leave it running.");
                 String o = con.run("cat " + plist, 90_000, 60_000);

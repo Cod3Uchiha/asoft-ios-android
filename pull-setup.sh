@@ -34,6 +34,10 @@ for os in ios26 watchos; do
     cp "$src/$os/steps/"*.sh "$a/setup/steps/$os/"
     find "$src/$os/scripts" -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' -o -name '*.txt' -o -name '*.hex' \)         -exec cp {} "$a/setup/scripts/$os/" \;
 done
+# the iOS 26 setup leaves SystemAppMigrator out of the disk (asoft-ios 5369636, PhoneSetup26 iosApps): an older
+# checkout's root26-staged.py would build the 52-minute variant without saying so
+grep -q skip_system_app_migrator "$a/setup/scripts/ios26/root26-staged.py" \
+    || { echo "$src: root26-staged.py has no skip_system_app_migrator; pull-setup.sh needs asoft-ios with 5369636 (pc-0.3.1)" >&2; exit 1; }
 mkdir -p "$a/setup/phone/jobs"
 cp "$here"/setup/phone/*.sh "$here"/setup/phone/*.py "$a/setup/phone/"
 cp "$here"/setup/phone/jobs/*.sh "$a/setup/phone/jobs/"
