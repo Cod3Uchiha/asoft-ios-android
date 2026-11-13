@@ -21,11 +21,12 @@ public class LowMemoryTest {
         assertEquals(3072, LowMemory.defaultGuestMiB(11_700_000_000L, Guest.WATCH));
     }
 
+    /** The offers of Guest.RAM_CHOICES_26 / _WATCH, copied so the test does not load Guest. */
     @Test
     public void defaultIsOneOfTheOffers() {
         for (long total : new long[]{3_500_000_000L, 5_800_000_000L, 7_500_000_000L, 11_700_000_000L, 15_500_000_000L}) {
-            assertTrue(contains(Guest.RAM_CHOICES_26, LowMemory.defaultGuestMiB(total, Guest.IOS26)));
-            assertTrue(contains(Guest.RAM_CHOICES_WATCH, LowMemory.defaultGuestMiB(total, Guest.WATCH)));
+            assertTrue(contains(new int[]{3072, 4096, 6144}, LowMemory.defaultGuestMiB(total, Guest.IOS26)));
+            assertTrue(contains(new int[]{2048, 3072}, LowMemory.defaultGuestMiB(total, Guest.WATCH)));
         }
     }
 
