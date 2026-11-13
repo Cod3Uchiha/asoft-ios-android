@@ -45,6 +45,11 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
     private String crashFor;
     /** watchOS: the picture sits in a drawn watch (WatchCase), whose crown and side button are the watch's. */
     private boolean watchMode;
+    /**
+     * The guest this screen was built for (Guest.os at onCreate). The screen is singleTask and outlives a run, so the next
+     * start of another guest finds it again: its layout (the watch's case, the surface) is for the first guest only.
+     */
+    private int builtFor;
     private WatchCase watchCase;
     private Object backCallback;
     /** ⏏ was pressed: leave once the saved guest has quit. */
@@ -126,7 +131,8 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
         }       // Android 10: immersive()'s layout flags do the same
         view = new SurfaceView(this);
         view.getHolder().addCallback(this);
-        watchMode = Guest.os(this) == Guest.WATCH;
+        builtFor = Guest.os(this);
+        watchMode = builtFor == Guest.WATCH;
         if (watchMode) {
             watchCase = new WatchCase(this);
             watchCase.addView(view);        // laid out at the watch's screen (render.c and guestPoint fit it exactly)
@@ -226,12 +232,29 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
     @Override
     protected void onNewIntent(android.content.Intent i) {
         super.onNewIntent(i);
+        setIntent(i);
+        if (rebuildForGuest()) {
+            return;         // the new screen's onCreate starts the guest
+        }
         if (!Guest.running() && !Guest.saving() && !closing && !"preparing".equals(Guest.state)) {
             restart.setVisibility(View.GONE);
             report.setVisibility(View.GONE);
             status.setText("starting");
             GuestService.start(this);
         }
+    }
+
+    /**
+     * The guest that runs, or was chosen for the next start, is not the one this screen was built for (an iOS 26 run ended
+     * and the watch was started): builds the screen again for it. True when it does.
+     */
+    private boolean rebuildForGuest() {
+        if (isFinishing() || Guest.os(this) == builtFor) {
+            return false;
+        }
+        AppLog.note(this, "screen: built for " + Guest.osName(builtFor) + ", now " + Guest.osName(Guest.os(this)) + ": rebuilt");
+        recreate();
+        return true;
     }
 
     private void guestBack() {
@@ -774,7 +797,7 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
                 Math.round((vw + w) / 2), Math.round((vh + h) / 2));
         int tw = 300, th = Math.max(1, Math.round(300 / g));
         android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(tw, th, android.graphics.Bitmap.Config.ARGB_8888);
-        java.io.File to = Guest.thumbFile(this, Guest.os(this));
+        java.io.File to = Guest.thumbFile(this, builtFor);    // (this screen's picture is of the guest it was built for)
         try {
             android.view.PixelCopy.request(view, from, b, result -> {
                 if (result == android.view.PixelCopy.SUCCESS) {
@@ -847,6 +870,9 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
     @Override
     protected void onResume() {
         super.onResume();
+        if (rebuildForGuest()) {
+            return;         // (a screen brought back from the recents after another guest was chosen)
+        }
         if (lockedByPhone) {
             lockedByPhone = false;
             readLeds();
