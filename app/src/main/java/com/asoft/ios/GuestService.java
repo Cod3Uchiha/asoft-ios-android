@@ -52,6 +52,11 @@ public class GuestService extends Service {
 
     /** The ongoing notification; every start command (re)posts it: startForegroundService wants that. */
     private void foreground(String text) {
+        // a dead system_server must not end the guest (issue 43 was the setup's twin of this)
+        Quiet.run(this, "guest notification", () -> foreground0(text));
+    }
+
+    private void foreground0(String text) {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(CHANNEL, "iOS", NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, ScreenActivity.class),

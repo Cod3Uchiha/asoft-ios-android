@@ -26,6 +26,14 @@ final class AppLog {
     }
 
     static synchronized void note(Context c, String s) {
+        try {
+            note0(c, s);
+        } catch (RuntimeException e) {
+            // a dead system_server fails the storage lookups too; a log line must not end a thread
+        }
+    }
+
+    private static void note0(Context c, String s) {
         String line = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date()) + " " + s;
         for (File f : new File[] {new File(Guest.runDir(c), "app.txt"), new File(dir(c), "app.txt")}) {
             try (PrintWriter w = new PrintWriter(new FileWriter(f, true))) {

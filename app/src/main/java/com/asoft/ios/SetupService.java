@@ -148,7 +148,8 @@ public class SetupService extends Service {
     }
 
     private void post(String text, int pct) {
-        getSystemService(NotificationManager.class).notify(NOTE, note(text, pct));
+        // a dead system_server must not stop the setup, which resumes anyway (issue 43)
+        Quiet.run(this, "setup notification", () -> getSystemService(NotificationManager.class).notify(NOTE, note(text, pct)));
     }
 
     @Override
@@ -410,14 +411,14 @@ public class SetupService extends Service {
                 worker = null;
                 if (state.finished) {
                     post(a26 ? "Set up: open ASoftware iOS and choose iOS 26 or watchOS" : "iOS 16 is set up: open ASoftware iOS and tap Start iOS 16", 100);
-                    stopForeground(STOP_FOREGROUND_DETACH);
+                    Quiet.run(this, "stopForeground", () -> stopForeground(STOP_FOREGROUND_DETACH));
                 } else if (state.error != null) {
                     post("Stopped: " + state.error, -1);
-                    stopForeground(STOP_FOREGROUND_DETACH);
+                    Quiet.run(this, "stopForeground", () -> stopForeground(STOP_FOREGROUND_DETACH));
                 } else {
-                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    Quiet.run(this, "stopForeground", () -> stopForeground(STOP_FOREGROUND_REMOVE));
                 }
-                stopSelf();
+                Quiet.run(this, "stopSelf", this::stopSelf);
             }
         }, "setup");
         worker.start();

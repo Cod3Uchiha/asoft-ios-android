@@ -550,6 +550,11 @@ final class CrashReport {
 
     /** The notice of a new record; a tap opens the home screen's report (never the guest's screen: that starts it). */
     private static void notify(Context c, String id, String guest, boolean crash, String cause) {
+        // the record is written; a dead system_server only costs the notice
+        Quiet.run(c, "crash notice", () -> notify0(c, id, guest, crash, cause));
+    }
+
+    private static void notify0(Context c, String id, String guest, boolean crash, String cause) {
         NotificationManager nm = c.getSystemService(NotificationManager.class);
         if (nm == null) {
             return;
