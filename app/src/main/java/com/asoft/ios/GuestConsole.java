@@ -80,6 +80,14 @@ final class GuestConsole implements AutoCloseable {
 
     /** The command's output, or null when it got none within @waitMs (sent again every @retryMs). */
     String run(String cmd, long waitMs, long retryMs) {
+        return run(cmd, waitMs, retryMs, false);
+    }
+
+    /**
+     * As run(); with @reset every send (the first too) goes after a reset: a retry typed onto a half line of the
+     * last one (or behind a command still running) never started, and nothing else cleared bash's input.
+     */
+    String run(String cmd, long waitMs, long retryMs, boolean reset) {
         long until = System.currentTimeMillis() + waitMs;
         while (System.currentTimeMillis() < until) {
             if (!connect()) {
@@ -96,6 +104,12 @@ final class GuestConsole implements AutoCloseable {
                 }
                 if (o == null) {
                     continue;
+                }
+                if (reset) {
+                    // Ctrl-C ends what runs and gives a new prompt, Ctrl-U drops what is typed, then a fresh line
+                    o.write(new byte[] {3, 21, '\r'});
+                    o.flush();
+                    sleep(300);
                 }
                 o.write(("echo @@" + tag + "\"S\"@@; " + cmd + "; echo @@" + tag + "\"E\"@@\r").getBytes(StandardCharsets.UTF_8));
                 o.flush();
