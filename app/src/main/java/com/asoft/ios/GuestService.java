@@ -174,6 +174,7 @@ public class GuestService extends Service {
                 if (!load && Guest.running() && !Guest.saving()) {
                     return;     // a second request waited for that step behind the first, which has started iOS
                 }
+                long startedAt = android.os.SystemClock.elapsedRealtime();
                 Guest.start(this, tag);
                 MemoryCleaner.start(this);
                 if (Guest.resumed && !resumedOk()) {
@@ -188,7 +189,11 @@ public class GuestService extends Service {
                         Guest.dropQuick(this);
                     }
                     Guest.waitEnded(30_000);
+                    startedAt = android.os.SystemClock.elapsedRealtime();
                     Guest.start(this, null);
+                }
+                if (Guest.running()) {
+                    RunStats.start(this, Guest.pid(this), Guest.os(this), Guest.resumed, startedAt);
                 }
                 if (Guest.ios26Running() && Guest.running()) {
                     AutoSave.start(this, Guest.pid(this), Guest.resumed);

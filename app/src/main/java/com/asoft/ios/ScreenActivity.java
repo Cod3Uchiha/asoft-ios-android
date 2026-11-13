@@ -1077,7 +1077,8 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
         }
         if (fbPid == pid && attached) {
             int w = surfW, h = surfH;
-            render.post(() -> Render.frame(w, h));
+            final int p = pid;
+            render.post(() -> RunStats.frame(p, Render.frame(w, h)));
             if ("running".equals(Guest.state) || "booting".equals(Guest.state)) {
                 keepThumb(false);       // (a boot's black screen is not kept)
             }
