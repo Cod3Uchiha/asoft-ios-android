@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout box;
     private final Panel p26 = new Panel(Guest.IOS26), p16 = new Panel(Guest.IOS16), pWatch = new Panel(Guest.WATCH);
-    private TextView powerWarn, freeRamValue, wadbValue, updateValue, logsValue, footer, engineLog;
+    private TextView hint, powerWarn, freeRamValue, wadbValue, updateValue, logsValue, footer, engineLog;
     private LinearLayout updateBar, advanced;
     private TextView updateText, updateNote, updateGet, updateDismiss;
     /**
@@ -106,7 +106,8 @@ public class MainActivity extends Activity {
         public void run() {
             // (a crash record comes a moment after QEMU's end, from its own thread: its notice counts as a change)
             String now = Guest.running() + " " + Guest.state + " " + Guest.os(MainActivity.this) + " " + Guest.saving() + " "
-                    + SetupService.busy() + " " + Guest.startError + " " + CrashReport.pendingKey(MainActivity.this);
+                    + SetupService.busy() + " " + SetupService.state.step + SetupService.state.pct + SetupService.state.paused + " "
+                    + Guest.startError + " " + CrashReport.pendingKey(MainActivity.this);
             if (!now.equals(shown)) {
                 shown = now;
                 refresh();
@@ -366,6 +367,12 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(-1, -2);
         nlp.bottomMargin = dp(12);
         box.addView(new RecordNotice(this, null).view(), nlp);
+        // nothing set up yet: the panels below say what each needs; this says where to begin
+        hint = text(box, "Nothing is set up yet. Tap Set up on iOS 26 or iOS 16 below: it downloads from Apple and is built on this phone.",
+                14, DIM);
+        hint.setLineSpacing(dp(1.5f), 1f);
+        hint.setPadding(dp(4), 0, dp(4), dp(14));
+        hint.setVisibility(View.GONE);
         // power saving slows iOS several times over: say so above everything else
         powerWarn = banner(0xff241b0b, ORANGE);
         powerWarn.setOnClickListener(v -> PowerCheck.openSettings(this));
@@ -422,9 +429,6 @@ public class MainActivity extends Activity {
         footer.setGravity(Gravity.CENTER);
         footer.setLayoutParams(top(new LinearLayout.LayoutParams(-1, -2), dp(26)));
 
-        if (saved == null && !Guest.available(this) && !Guest.available26(this)) {
-            startActivity(new Intent(this, SetupActivity.class));   // first start: set up first
-        }
         if (saved == null) {
             showCrashOf(getIntent());
         }
@@ -582,9 +586,9 @@ public class MainActivity extends Activity {
     }
 
     private void primaryAction(int os) {
-        if (os == Guest.IOS16 && (!Guest.available(this) || SetupService.busy())) {
+        if (os == Guest.IOS16 && (!Guest.available(this) || SetupState.settingUp(this, Guest.IOS16))) {
             startActivity(new Intent(this, SetupActivity.class));
-        } else if (os == Guest.IOS26 && !Guest.available26(this)) {
+        } else if (os != Guest.IOS16 && !installed(os)) {
             startActivity(new Intent(this, SetupActivity.class).putExtra(SetupActivity.EXTRA_IOS26, true));  // Setup26Screen
         } else if (installed(os)) {
             open(os);
@@ -729,9 +733,6 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, text, Toast.LENGTH_LONG).show();
                 shown = "";
                 refresh();
-                if (removed && !Guest.available(this) && !Guest.available26(this) && !WatchProfile.available(this)) {
-                    startActivity(new Intent(this, SetupActivity.class));   // nothing left: set up first, as on a fresh app
-                }
             });
         }, "remove").start();
     }
@@ -1030,8 +1031,8 @@ public class MainActivity extends Activity {
         boolean twoX = Guest.scale26(this) == 2;
         boolean up = Guest.running() && Guest.os(this) == Guest.IOS26;
         if (missing != null) {
-            boolean busy = SetupService.busy() && "a26".equals(SetupService.state.target);
-            state(c, busy ? STARTING : OFF, busy ? "Being set up" : "Not installed");
+            boolean busy = SetupService.busy() && SetupState.settingUp(this, Guest.IOS26);
+            state(c, busy ? STARTING : OFF, busy ? settingUp(Guest.IOS26) : "Not installed");
             detail(c, busy ? SetupService.state.text : "Downloads about 10 GB from Apple and builds it on this phone."
                     + (debug ? " (No " + new File(Guest.dir26(this), missing).getName() + ".)" : ""));
             buttons(c, busy ? "Show" : "Set up", false);
@@ -1092,9 +1093,18 @@ public class MainActivity extends Activity {
     private void refreshWatch() {
         Panel c = pWatch;
         boolean have = WatchProfile.available(this);
-        c.root.setVisibility(have ? View.VISIBLE : View.GONE);
+        boolean busy = !have && SetupService.busy() && SetupState.settingUp(this, Guest.WATCH);
+        c.root.setVisibility(have || busy ? View.VISIBLE : View.GONE);
         if (!have) {
             showCrash(c, null);
+            showBack(c, null);
+            if (busy) {
+                // being set up (from iOS 26's Set up): the device shows it, as iOS 26's and iOS 16's do
+                state(c, STARTING, settingUp(Guest.WATCH));
+                detail(c, SetupService.state.text);
+                buttons(c, "Show", false);
+                c.device.show(null, false, false);
+            }
             return;
         }
         boolean up = Guest.running() && Guest.os(this) == Guest.WATCH;
@@ -1135,12 +1145,18 @@ public class MainActivity extends Activity {
         }, "home-refresh-watch").start();
     }
 
+    /** "Setting up: step 3 of 12, 42%" for @os's running setup (SetupState). */
+    private String settingUp(int os) {
+        SetupService.State st = SetupService.state;
+        return SetupState.line(false, true, st.paused, SetupState.running(this, os), "", "");
+    }
+
     private void refresh16() {
         Panel c = p16;
         boolean up = Guest.running() && Guest.os(this) == Guest.IOS16;
         // the setup from Apple runs (its last step starts iOS once, in the background): the panel follows it
-        if (SetupService.busy() && !"a26".equals(SetupService.state.target)) {
-            state(c, STARTING, "Being installed");
+        if (SetupService.busy() && SetupState.settingUp(this, Guest.IOS16)) {
+            state(c, STARTING, settingUp(Guest.IOS16));
             detail(c, SetupService.state.text);
             buttons(c, "Show", false);
             c.menu.setVisibility(View.INVISIBLE);
@@ -1365,6 +1381,8 @@ public class MainActivity extends Activity {
         }
         showSettings();
         showPowerWarning();
+        hint.setVisibility(!Guest.available(this) && !Guest.available26(this) && !WatchProfile.available(this)
+                && !SetupService.busy() ? View.VISIBLE : View.GONE);
         footer.setText(String.format(java.util.Locale.ROOT, "ASoftware iOS %s  ·  %.1f GB free on this phone",
                 UpdateCheck.version(this), getFilesDir().getUsableSpace() / 1e9));
     }

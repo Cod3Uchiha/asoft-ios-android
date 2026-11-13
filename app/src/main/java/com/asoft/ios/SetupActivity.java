@@ -35,6 +35,18 @@ public class SetupActivity extends Activity {
     private SetupScreen fromApple;
     private Setup26Screen from26;
     private View section26;
+    /** "iOS 26 is set up" with its one action, home: shown when a setup (or an import) has finished. */
+    private LinearLayout doneBanner;
+    private TextView doneText;
+    private String importDone;
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable follow = new Runnable() {
+        @Override
+        public void run() {
+            showDone();
+            ui.postDelayed(this, 700);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle state) {
@@ -81,6 +93,60 @@ public class SetupActivity extends Activity {
         if (!busy) {
             show();                     // a file may have arrived over adb meanwhile
         }
+        ui.post(follow);
+    }
+
+    @Override
+    protected void onPause() {
+        ui.removeCallbacks(follow);
+        super.onPause();
+    }
+
+    /**
+     * The home screen, from the arrow, the Back gesture and "Go to home". A running setup goes on in its service. When this
+     * page is the first of its task (opened from the setup's notification after the app's task was gone), Back would leave
+     * the app: the home screen is started first.
+     */
+    private void goHome() {
+        if (isTaskRoot()) {
+            startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        }
+        finish();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        goHome();
+    }
+
+    /**
+     * Left by the Home button or the recents (not by a picker or Logs): with nothing running here, the page closes, so the
+     * launcher icon lands on the home screen, which shows a running setup on its device. An import from a file runs in this page.
+     */
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (!busy) {
+            finish();
+        }
+    }
+
+    /** What the finished setup says, and its way home. Hidden while one runs or when none finished. */
+    private void showDone() {
+        SetupService.State s = SetupService.state;
+        String text = importDone;
+        if (text == null && s.finished && !s.running && s.error == null) {
+            text = "a26".equals(s.target) ? setUpNames() : "iOS 16 is set up.";
+        }
+        doneText.setText(text == null ? "" : text + " Start it from the home screen.");
+        doneBanner.setVisibility(text == null || busy || s.running ? View.GONE : View.VISIBLE);
+    }
+
+    /** "iOS 26 and watchOS are set up." for what the finished run made. */
+    private String setUpNames() {
+        boolean i = Guest.available26(this), w = WatchProfile.available(this);
+        return i && w ? "iOS 26 and watchOS are set up." : w ? "watchOS is set up." : "iOS 26 is set up.";
     }
 
     private TextView text(String s, float size, int color) {
@@ -109,23 +175,39 @@ public class SetupActivity extends Activity {
 
     private void show() {
         box.removeAllViews();
-        // the title, and Logs beside it: there on a fresh app too, where a failed first setup has nothing else to show
-        LinearLayout head = new LinearLayout(this);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(0, 0, 0, 28);
+        // the way back to the home screen, Logs on the other side (there on a fresh app too, where a failed first setup
+        // has nothing else to show), and the title
+        LinearLayout navBar = new LinearLayout(this);
+        navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setGravity(Gravity.CENTER_VERTICAL);
+        TextView back = Ui.link(this, "‹  Home", Ui.LINK, v -> goHome());
+        back.setTextSize(16);
+        back.setPadding(0, Ui.dp(this, 10), Ui.dp(this, 16), Ui.dp(this, 10));
+        back.setContentDescription("Back to the home screen");
+        navBar.addView(back, new LinearLayout.LayoutParams(0, -2, 1));
+        navBar.addView(Ui.link(this, "Logs", Ui.LINK, v -> startActivity(new Intent(this, LogsActivity.class))));
+        box.addView(navBar);
         TextView title = new TextView(this);
         title.setText("Set up");
         title.setTextSize(26);
         title.setTextColor(Color.WHITE);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        Button logs = new Button(this);
-        logs.setText("Logs");
-        logs.setAllCaps(false);
-        logs.setOnClickListener(v -> startActivity(new Intent(this, LogsActivity.class)));
-        head.addView(logs, new LinearLayout.LayoutParams(-2, -2));
-        box.addView(head);
+        title.setPadding(0, Ui.dp(this, 6), 0, 28);
+        box.addView(title);
+        doneBanner = new LinearLayout(this);
+        doneBanner.setOrientation(LinearLayout.VERTICAL);
+        doneBanner.setVisibility(View.GONE);
+        doneText = new TextView(this);
+        doneText.setTextSize(16);
+        doneText.setTextColor(Ui.GREEN);
+        doneBanner.addView(doneText);
+        TextView homeBtn = Ui.capsule(this, "Go to home", false, v -> goHome());
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-2, -2);
+        hlp.topMargin = Ui.dp(this, 12);
+        hlp.bottomMargin = 28;
+        doneBanner.addView(homeBtn, hlp);
+        box.addView(doneBanner);
+        showDone();
         if (notice == null) {
             notice = new RecordNotice(this, () -> {
                 SetupService.State s = SetupService.state;
@@ -182,7 +264,7 @@ public class SetupActivity extends Activity {
         bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
         bar.setVisibility(View.GONE);
-        box.addView(bar);
+        box.addView(navBar);
         status = text("", 15, Color.WHITE);
         status.setGravity(Gravity.START);
     }
@@ -296,6 +378,7 @@ public class SetupActivity extends Activity {
         bar.setVisibility(View.VISIBLE);
         status.setText("Starting… keep this screen open.");
         importRecord = null;
+        importDone = null;
         long t0 = System.currentTimeMillis();
         long logAt = new java.io.File(Guest.runDir(this), "app.txt").length();
         AppExit.begin(this, AppExit.IMPORT, "an import from the PC was running");
@@ -397,6 +480,8 @@ public class SetupActivity extends Activity {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         show();
         status.setText(result);
+        importDone = result.contains(" is set up") ? result.split("\n")[0] : null;
+        showDone();
         String id = importRecord;
         if (id != null) {
             // under the failed import's line: its log, as under a failed setup step
