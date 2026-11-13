@@ -11,8 +11,14 @@ import java.util.Locale;
  * from the dialog, so they are unit-tested (LowMemoryTest).
  */
 final class LowMemory {
-    /** Below this a phone (MemTotal, bytes) starts iOS 26 with 3 GiB: 12 GB phones report ~11.7 GB, 16 GB ones ~15.5. */
-    static final long BIG_PHONE = 14_000_000_000L;
+    /** Below this a phone (MemTotal, bytes) always starts iOS 26 with 3 GiB (as in 0.1.5). */
+    static final long BIG_PHONE = 10_000_000_000L;
+    /**
+     * The undecided K5 change: 3 GiB instead of 4 GiB on phones from BIG_PHONE up to this size (12 GB phones report
+     * ~11.7 GB, 16 GB ones ~15.5). Set to BIG_PHONE = the 0.1.5 behaviour (4 GiB from 10 GB); the user has not decided,
+     * 14_000_000_000L is the K5 plan's value.
+     */
+    static final long IOS26_3G_UP_TO = BIG_PHONE;
     /** Below this the watch starts with 2 GiB (unchanged since 0.1.0). */
     private static final long WATCH_BIG_PHONE = 10_000_000_000L;
 
@@ -23,13 +29,13 @@ final class LowMemory {
      * The RAM (MiB) a guest gets when the user has not chosen one. Only the phone's size decides, never what is free
      * now: a default that moved from one start to the next would make every quick save "other hardware"
      * (Guest.otherHardware). 4 GiB on a 12 GB phone was closed by Android after 16 min with 1.0-1.7 GB free
-     * (A#8), so iOS 26 gets 4 GiB only from 14 GB (K5 plan: "under 14 GB: 3072"; not measured over a long session).
+     * (A#8), so the K5 plan wants 3 GiB under 14 GB (IOS26_3G_UP_TO; not measured over a long session, so left at 10 GB).
      */
     static int defaultGuestMiB(long memTotal, int forOs) {
         if (forOs == Guest.WATCH) {
             return memTotal < WATCH_BIG_PHONE ? 2048 : 3072;
         }
-        return memTotal < BIG_PHONE ? 3072 : 4096;
+        return memTotal < IOS26_3G_UP_TO ? 3072 : 4096;
     }
 
     /**

@@ -509,7 +509,7 @@ final class Guest {
 
     /**
      * The guest's RAM in MiB, per OS, chosen in its menu on the home screen (iOS 26 3, 4 or 6 GiB; the watch 2 or 3 GiB). Unchosen
-     * (LowMemory.defaultGuestMiB): iOS 26 4 GiB on a phone from 14 GB, else 3 GiB; the watch 3 GiB from 10 GB, else 2 GiB (2 GiB slowed the watch's
+     * (LowMemory.defaultGuestMiB): iOS 26 4 GiB on a phone from LowMemory.IOS26_3G_UP_TO (10 GB), else 3 GiB; the watch 3 GiB from 10 GB, else 2 GiB (2 GiB slowed the watch's
      * cold Settings from 5.5 to 27 s but left ~1.3 GB more to Android, WATCHOS.md). A save always loads with
      * the RAM it was made with (savedRam), so a new size takes effect at the next full start.
      */

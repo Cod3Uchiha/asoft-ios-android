@@ -11,7 +11,8 @@ public class LowMemoryTest {
     public void ios26DefaultByPhoneSize() {
         // 8 GB (7.5 reported), 12 GB (11.7, the S25 Ultra of A#8) and 16 GB (15.5) phones
         assertEquals(3072, LowMemory.defaultGuestMiB(7_500_000_000L, Guest.IOS26));
-        assertEquals(3072, LowMemory.defaultGuestMiB(11_700_000_000L, Guest.IOS26));
+        // 10-14 GB: 4 GiB as in 0.1.5 while IOS26_3G_UP_TO is left at 10 GB
+        assertEquals(LowMemory.IOS26_3G_UP_TO > 11_700_000_000L ? 3072 : 4096, LowMemory.defaultGuestMiB(11_700_000_000L, Guest.IOS26));
         assertEquals(4096, LowMemory.defaultGuestMiB(15_500_000_000L, Guest.IOS26));
     }
 
