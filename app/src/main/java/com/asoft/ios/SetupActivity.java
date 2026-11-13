@@ -57,13 +57,12 @@ public class SetupActivity extends Activity {
         scroll.setFitsSystemWindows(true);
         box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(56, 72, 56, 56);
+        box.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 16), Ui.dp(this, 32));
         scroll.addView(box);
         setContentView(scroll);
         show();
         // the home screen's "Set up iOS 26 or watchOS": open at that part, not at iOS 16's. The parts above it
-        // fill in after the first layout (iOS 16's list of Apple's files), so it follows that part's place
-        // for 3 s, until the first touch
+        // change size after the first layout, so it follows that part's place for 3 s, until the first touch
         if (state == null && getIntent().getBooleanExtra(EXTRA_IOS26, false)) {
             long until = android.os.SystemClock.uptimeMillis() + 3000;
             boolean[] touched = {false};
@@ -78,7 +77,12 @@ public class SetupActivity extends Activity {
                         scroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                         return;
                     }
-                    scroll.scrollTo(0, Math.max(0, section26.getTop() - 24));
+                    // (the section sits inside Setup26Screen's column: its place in the page is the sum up to the page)
+                    int y = 0;
+                    for (View v = section26; v != null && v != box && v.getParent() instanceof View; v = (View) v.getParent()) {
+                        y += v.getTop();
+                    }
+                    scroll.scrollTo(0, Math.max(0, y - 24));
                 }
             });
         }
@@ -145,8 +149,9 @@ public class SetupActivity extends Activity {
 
     /** "iOS 26 and watchOS are set up." for what the finished run made. */
     private String setUpNames() {
-        boolean i = Guest.available26(this), w = WatchProfile.available(this);
-        return i && w ? "iOS 26 and watchOS are set up." : w ? "watchOS is set up." : "iOS 26 is set up.";
+        boolean i = PhoneSetup26.wants(this, PhoneSetup26.IOS26) && PhoneSetup26.installed(this, PhoneSetup26.IOS26);
+        boolean w = PhoneSetup26.wants(this, PhoneSetup26.WATCH) && PhoneSetup26.installed(this, PhoneSetup26.WATCH);
+        return i && w ? "iOS 26 and watchOS are set up." : w ? "watchOS is set up." : i ? "iOS 26 is set up." : "It is set up.";
     }
 
     private TextView text(String s, float size, int color) {
@@ -208,6 +213,13 @@ public class SetupActivity extends Activity {
         doneBanner.addView(homeBtn, hlp);
         box.addView(doneBanner);
         showDone();
+        // an import from a file: its bar and its line (an import runs in this page; setups run in their service)
+        bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(1000);
+        bar.setVisibility(View.GONE);
+        box.addView(bar);
+        status = text("", 15, Color.WHITE);
+        status.setGravity(Gravity.START);
         if (notice == null) {
             notice = new RecordNotice(this, () -> {
                 SetupService.State s = SetupService.state;
@@ -221,49 +233,57 @@ public class SetupActivity extends Activity {
         LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(-1, -2);
         nlp.bottomMargin = 28;
         box.addView(n, nlp);
-        if (Installer.installed(this)) {
-            text("iOS 16 is set up on this phone. Importing or installing again replaces it: this iPhone's settings, apps and saves go.",
-                    15, 0xffbbbbbb);
-        }
-        // no PC: Apple's files, the PC installer's helper VM (PhoneSetup)
+        // iOS 16, then iOS 26 and watchOS (with the one run's details), each a section: state, action, Details
         if (fromApple == null) {
             fromApple = new SetupScreen(this);
         }
         box.addView(fromApple.view());
-        // iOS 26 and watchOS from Apple, behind the GPU check (Setup26Screen)
+        Ui.line(this, box, 22, 22);
         if (from26 == null) {
             from26 = new Setup26Screen(this);
         }
-        section26 = from26.view();      // (view() takes it out of its old parent: call it only here)
-        box.addView(section26);
-        TextView pc = text("Or bring it from your PC", 18, Color.WHITE);
-        pc.setPadding(0, 56, 0, 28);
-        text("1. Install ASoftware iOS (iOS 16) on a Windows PC.\n"
-                + "2. On the PC, run Send-ToPhone.cmd from the ASoftware iOS folder. It packs that iOS into ASoftware-iOS16.asoft (about 6.5 GB).\n"
-                + "3. With this phone on USB and USB debugging on, it sends the file here by itself. "
-                + "Otherwise copy the file to the phone (for example to Download) and choose it below.",
-                15, 0xffbbbbbb);
-        for (File f : Installer.waiting(this)) {
-            button(String.format("Import %s (%.1f GB)", f.getName(), f.length() / 1e9), v -> {
+        box.addView(from26.view());     // (view() takes it out of its old parent: call it only here)
+        section26 = from26.ios26Section();
+        Ui.line(this, box, 22, 22);
+        pcSection();
+    }
+
+    /** "Bring it from your PC": an import of what the PC installer made, instead of the download. Closed unless a file is waiting. */
+    private void pcSection() {
+        SetupSection pc = new SetupSection(this, "From your PC", -1, null);
+        pc.setState(SetupSection.OFF, "Instead of the download");
+        SetupSection.say(pc.info, String.format("%.1f GB free on this phone; iOS 16 needs about 6.5 GB, and 4 GB more for a save.",
+                getFilesDir().getUsableSpace() / 1e9), Ui.DIM);
+        TextView choose = Ui.capsule(this, "Choose file…", true, v -> {
+            if (!busy) {
+                startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PICK);
+            }
+        });
+        pc.actions.addView(choose, new LinearLayout.LayoutParams(-2, -2));
+        File[] waiting = Installer.waiting(this);
+        for (File f : waiting) {
+            TextView b = Ui.capsule(this, String.format(java.util.Locale.ROOT, "Import %s (%.1f GB)", f.getName(), f.length() / 1e9), false, v -> {
                 try {
                     run(new FileInputStream(f), f.length(), f);
                 } catch (IOException e) {
                     status.setText(e.getMessage());
                 }
             });
+            pc.main.addView(b, Ui.top(Ui.dp(this, 10)));
+            ((LinearLayout.LayoutParams) b.getLayoutParams()).width = -2;
         }
-        button("Choose file…", v -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-            startActivityForResult(i, PICK);
-        });
-        text(String.format("%.1f GB free on this phone; iOS needs about 6.5 GB, and 4 GB more for a save.",
-                getFilesDir().getUsableSpace() / 1e9), 13, 0xff888888).setPadding(0, 28, 0, 28);
-        bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setMax(1000);
-        bar.setVisibility(View.GONE);
-        box.addView(navBar);
-        status = text("", 15, Color.WHITE);
-        status.setGravity(Gravity.START);
+        pc.paragraph("1. Install ASoftware iOS (iOS 16) on a Windows PC.\n"
+                + "2. On the PC, run Send-ToPhone.cmd from the ASoftware iOS folder. It packs that iOS into ASoftware-iOS16.asoft (about 6.5 GB).\n"
+                + "3. With this phone on USB and USB debugging on, it sends the file here by itself. "
+                + "Otherwise copy the file to the phone (for example to Download) and choose it.", Ui.DIM);
+        if (Installer.installed(this)) {
+            pc.paragraph("iOS 16 is set up on this phone. Importing or installing again replaces it: this iPhone's settings, apps and saves go.",
+                    0xffbbbbbb);
+        }
+        if (waiting.length > 0) {
+            pc.open();      // a file is waiting: its button is the point of this part
+        }
+        box.addView(pc.root);
     }
 
     @Override
@@ -319,11 +339,6 @@ public class SetupActivity extends Activity {
     private void importNow(InputStream in, long total, File done) {
         busy = true;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        for (int i = 0; i < box.getChildCount(); i++) {
-            if (box.getChildAt(i) instanceof Button) {
-                box.getChildAt(i).setEnabled(false);
-            }
-        }
         bar.setVisibility(View.VISIBLE);
         status.setText("Starting… keep this screen open.");
         importRecord = null;

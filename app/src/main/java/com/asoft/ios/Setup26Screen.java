@@ -4,13 +4,9 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
-import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -22,14 +18,13 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Set up's "iOS 26 and watchOS from Apple": the GPU check first (no download without a pass; a failure says
- * the GPU is not supported yet and offers its log to copy or share), then the choice (iOS 26, watchOS or
- * both; the shared part once), the download's files, every step with its marker, the space (free, what the
- * next step needs, the peak so far) and why it waits (Wi-Fi, heat, battery). SetupScreen's style.
+ * Set up's iOS 26 and watchOS from Apple: a section for each (SetupSection: state in one line, the one action, the GPU check
+ * as the line they both need, Details closed), and under them "This setup", the one run's download, space and steps, which
+ * exists while a run does. The GPU check comes first (no download without a pass; a failure says the GPU is not supported yet
+ * and offers its log to copy or share). The choice of both at once is a box in Details; the shared part is done once.
  */
 final class Setup26Screen {
-    private static final int CARD = 0xff1c1c1e, LINE = 0xff38383a, GRAY = 0xff9a9a9a, DIM = 0xff777777,
-            RED = 0xffff453a, GREEN = 0xff30d158, ORANGE = 0xffff9f0a;
+    private static final int GRAY = Ui.DIM, RED = Ui.RED, GREEN = Ui.GREEN, ORANGE = Ui.ORANGE;
 
     private static final Map<String, String> NAMES = new LinkedHashMap<>();
 
@@ -47,19 +42,28 @@ final class Setup26Screen {
         NAMES.put("Firmware/all_flash/DeviceTree.n207sap.im4p", "Watch device tree");
     }
 
+    /** One system's size on the disk, measured once off the UI thread when it turns up set up. */
+    private static final class Sized {
+        volatile String text;
+        boolean measuring, was;
+    }
+
     private final Activity a;
     private final LinearLayout root;
     private final Handler h = new Handler(Looper.getMainLooper());
-    private TextView gpu, free, total, details, error, memory;
-    /** Share log and Report on GitHub under a failed step's red line (SetupScreen.logButtons). */
+    private final SetupSection s26, sw, run;
+    private final Sized size26 = new Sized(), sizeWatch = new Sized();
+    private TextView gpu, total, memory;
+    private LinearLayout gpuButtons, files, steps;
     private View errorButtons;
     private ProgressBar totalBar;
-    private LinearLayout gpuButtons, choice, files, steps;
-    private CheckBox want26, wantWatch;
-    private Button go, cancel;
+    private CheckBox alsoWatch, alsoIos26;
+    private TextView primary26, primaryWatch, cancel;
     private final Map<String, TextView[]> fileRows = new LinkedHashMap<>();
     private final Map<String, ProgressBar> fileBars = new LinkedHashMap<>();
     private final Map<String, TextView> stepRows = new LinkedHashMap<>();
+    /** What a tap on a system's action had to say (iOS runs, another install runs), under that system. */
+    private final Map<String, String> said = new LinkedHashMap<>();
     private volatile GpuCheck.Result gpuResult;
     private String builtFor = "";
 
@@ -68,6 +72,9 @@ final class Setup26Screen {
         root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
         gpuResult = GpuCheck.dir(a).isDirectory() ? GpuCheck.last(a) : null;
+        s26 = new SetupSection(a, "iOS 26", DeviceView.ISLAND, new int[] {0xff5a9bff, 0xff4a5df0, 0xff5b36cf});
+        sw = new SetupSection(a, "watchOS", DeviceView.WATCH, null);
+        run = new SetupSection(a, "This setup", -1, null);
         build();
         tick();
     }
@@ -79,117 +86,73 @@ final class Setup26Screen {
         return root;
     }
 
-    private LinearLayout card(LinearLayout to, int top) {
-        LinearLayout c = new LinearLayout(a);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(48, 36, 48, 36);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(CARD);
-        bg.setCornerRadius(36);
-        c.setBackground(bg);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = top;
-        to.addView(c, lp);
-        return c;
+    /** The view of the iOS 26 section, for the page to scroll to. */
+    View ios26Section() {
+        return s26.root;
     }
 
     private TextView text(LinearLayout to, String s, float size, int color) {
-        TextView t = new TextView(a);
-        t.setText(s);
-        t.setTextSize(size);
-        t.setTextColor(color);
-        to.addView(t);
-        return t;
-    }
-
-    private void line(LinearLayout to) {
-        View v = new View(a);
-        v.setBackgroundColor(LINE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 2);
-        lp.topMargin = 20;
-        lp.bottomMargin = 20;
-        to.addView(v, lp);
-    }
-
-    private Button button(LinearLayout to, String s, View.OnClickListener l) {
-        Button b = new Button(a);
-        b.setText(s);
-        b.setAllCaps(false);
-        b.setOnClickListener(l);
-        to.addView(b, new LinearLayout.LayoutParams(0, -2, 1));
-        return b;
+        return Ui.text(a, to, s, size, color);
     }
 
     private void build() {
-        TextView title = text(root, "iOS 26 and watchOS from Apple", 18, Color.WHITE);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setPadding(0, 56, 0, 8);
-        text(root, "iOS 26.6.2 and watchOS 27.2 run on the cloudOS 26.4 research kernel and draw through the phone's GPU. "
-                + "The phone downloads Apple's files itself and builds their disks as the PC installer does: iOS 26 is about "
-                + "10 GB from Apple and several hours of work, watchOS about 5 GB and about an hour, and their shared part "
-                + "1 GB once. Keep the phone on its charger and on Wi-Fi.", 15, GRAY).setPadding(0, 0, 0, 16);
+        root.addView(s26.root);
+        Ui.line(a, root, 22, 22);
+        root.addView(sw.root);
+        Ui.line(a, root, 22, 22);
+        root.addView(run.root);
 
-        LinearLayout g = card(root, 16);
-        gpu = text(g, "", 15, Color.WHITE);
+        // iOS 26: the GPU check is its first line, and the watch's too (they draw through the same GPU)
+        gpu = text(s26.main, "", 13.5f, Ui.TEXT);
+        gpu.setLineSpacing(Ui.dp(a, 1.5f), 1f);
+        gpu.setPadding(0, Ui.dp(a, 8), 0, 0);
         gpuButtons = new LinearLayout(a);
         gpuButtons.setOrientation(LinearLayout.HORIZONTAL);
-        gpuButtons.setPadding(0, 16, 0, 0);
-        g.addView(gpuButtons);
+        s26.main.addView(gpuButtons);
 
-        choice = card(root, 24);
-        want26 = check(choice, "iOS 26", PhoneSetup26.wants(a, PhoneSetup26.IOS26));
-        line(choice);
-        wantWatch = check(choice, "watchOS (Apple Watch Series 9)", PhoneSetup26.wants(a, PhoneSetup26.WATCH));
+        primary26 = Ui.capsule(a, "Set up", false, v -> onGo(PhoneSetup26.IOS26));
+        s26.actions.addView(primary26, new LinearLayout.LayoutParams(-2, -2));
+        primaryWatch = Ui.capsule(a, "Set up", false, v -> onGo(PhoneSetup26.WATCH));
+        sw.actions.addView(primaryWatch, new LinearLayout.LayoutParams(-2, -2));
 
-        free = text(root, "", 13, DIM);
-        free.setPadding(0, 16, 0, 0);
-        LinearLayout dl = card(root, 16);
-        total = text(dl, "", 16, Color.WHITE);
-        totalBar = new ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal);
-        totalBar.setMax(1000);
-        dl.addView(totalBar, new LinearLayout.LayoutParams(-1, 24));
-        details = text(dl, "", 13, GRAY);
-        details.setPadding(0, 12, 0, 0);
-        files = new LinearLayout(a);
-        files.setOrientation(LinearLayout.VERTICAL);
-        dl.addView(files);
+        s26.paragraph("iOS 26.6.2 and watchOS 27.2 run on the cloudOS 26.4 research kernel and draw through the phone's GPU. "
+                + "The phone downloads Apple's files itself and builds their disks as the PC installer does: iOS 26 is about "
+                + "10 GB from Apple and several hours of work, watchOS about 5 GB and about an hour, and their shared part "
+                + "1 GB once. Keep the phone on its charger and on Wi-Fi.", GRAY);
+        alsoWatch = check(s26.body, "Set up watchOS in the same run");
+        sw.paragraph("watchOS 27.2 for an Apple Watch Series 9. It uses the same cloudOS files as iOS 26 (about 1 GB, downloaded "
+                + "once) and the same GPU check.", GRAY);
+        alsoIos26 = check(sw.body, "Set up iOS 26 in the same run");
 
-        steps = card(root, 24);
-        error = text(root, "", 15, RED);
-        error.setPadding(8, 24, 8, 0);
-        errorButtons = SetupScreen.logButtons(a, root, () -> SetupService.state.record);
-        memory = text(root, "", 13, GRAY);
-        memory.setPadding(8, 16, 8, 0);
-
-        LinearLayout buttons = new LinearLayout(a);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setPadding(0, 24, 0, 0);
-        go = new Button(a);
-        go.setAllCaps(false);
-        go.setTextSize(17);
-        go.setOnClickListener(v -> onGo());
-        cancel = new Button(a);
-        cancel.setAllCaps(false);
-        cancel.setText("Cancel");
-        cancel.setTextColor(RED);
-        cancel.setOnClickListener(v -> new android.app.AlertDialog.Builder(a)
+        // This setup: the run's download, its steps, the room
+        cancel = Ui.link(a, "Cancel", RED, v -> new android.app.AlertDialog.Builder(a)
                 .setTitle("Cancel the install?")
                 .setMessage("What was downloaded and built for it is deleted (an installed iOS 26 or watchOS stays).")
                 .setPositiveButton("Cancel install", (d, w) -> SetupService.cancel(a))
                 .setNegativeButton("Keep going", null)
                 .show());
-        buttons.addView(go, new LinearLayout.LayoutParams(0, -2, 1));
-        buttons.addView(cancel, new LinearLayout.LayoutParams(-2, -2));
-        root.addView(buttons);
+        run.actions.addView(cancel, new LinearLayout.LayoutParams(-2, -2));
+        errorButtons = SetupScreen.logButtons(a, run.main, () -> SetupService.state.record);
+        run.heading("Download");
+        total = text(run.body, "", 15, Ui.TEXT);
+        totalBar = run.bar(run.body, 4);
+        files = new LinearLayout(a);
+        files.setOrientation(LinearLayout.VERTICAL);
+        run.body.addView(files, Ui.top(Ui.dp(a, 6)));
+        run.heading("Steps");
+        steps = new LinearLayout(a);
+        steps.setOrientation(LinearLayout.VERTICAL);
+        run.body.addView(steps);
+        memory = text(run.body, "", 13, GRAY);
+        memory.setPadding(0, Ui.dp(a, 10), 0, 0);
     }
 
-    private CheckBox check(LinearLayout to, String s, boolean on) {
+    private CheckBox check(LinearLayout to, String s) {
         CheckBox b = new CheckBox(a);
         b.setText(s);
-        b.setTextColor(Color.WHITE);
-        b.setTextSize(15);
-        b.setChecked(on);
-        to.addView(b);
+        b.setTextColor(Ui.TEXT);
+        b.setTextSize(14.5f);
+        to.addView(b, Ui.top(Ui.dp(a, 8)));
         return b;
     }
 
@@ -197,9 +160,20 @@ final class Setup26Screen {
         return "a26".equals(SetupService.state.target);
     }
 
-    private void onGo() {
+    private static String name(String group) {
+        return PhoneSetup26.WATCH.equals(group) ? "watchOS" : "iOS 26";
+    }
+
+    private void tell(String group, String s) {
+        said.put(group, s);
+    }
+
+    /** The action of @group's section: Set up, Resume, Pause, or the GPU check first. */
+    private void onGo(String group) {
         SetupService.State s = SetupService.state;
-        if (s.running && mine()) {
+        said.remove(group);
+        boolean inRun = SetupState.plan26(a, group, false) != null;
+        if (s.running && mine() && inRun) {
             if (s.paused) {
                 SetupService.startA26(a);
             } else {
@@ -208,25 +182,25 @@ final class Setup26Screen {
             return;
         }
         if (s.running) {
-            error.setText("Another install is running: let it finish first.");
+            tell(group, "Another install is running: let it finish first.");
             return;
         }
         if (Guest.running()) {
-            error.setText("Close iOS first (side bar > Saves > Save and close): the setup needs its memory and its QEMU.");
+            tell(group, "Close iOS first (side bar > Saves > Save and close): the setup needs its memory and its QEMU.");
             return;
         }
         if (!GpuCheck.passed(a)) {
             runCheck();
             return;
         }
-        boolean i26 = want26.isChecked() && !PhoneSetup26.installed(a, PhoneSetup26.IOS26);
-        boolean w = wantWatch.isChecked() && !PhoneSetup26.installed(a, PhoneSetup26.WATCH);
-        if (!i26 && !w) {
-            error.setText("Choose iOS 26, watchOS or both.");
-            return;
+        // (a begun run goes on with what it was asked for; a new one is this system, and the other too when its box is ticked)
+        if (!PhoneSetup26.pending(a, group)) {
+            boolean ios = PhoneSetup26.IOS26.equals(group);
+            String other = ios ? PhoneSetup26.WATCH : PhoneSetup26.IOS26;
+            boolean withOther = (ios ? alsoWatch : alsoIos26).isChecked() && !PhoneSetup26.installed(a, other)
+                    || PhoneSetup26.pending(a, other);
+            PhoneSetup26.setWants(a, ios || withOther && !ios, !ios || withOther && ios);
         }
-        PhoneSetup26.setWants(a, i26, w);
-        error.setText("");
         // (the helper VM takes memory too: say so when little is free, K5)
         LowMemory.askBeforeStart(a, "the setup", Helper.needBytes(Helper.ramMiB(a, Helper.FLOOR_WORK_IN_RAM)),
                 () -> Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.startA26(a)));
@@ -237,7 +211,7 @@ final class Setup26Screen {
             return;
         }
         gpu.setText("Checking this phone's GPU… (about 10 s)");
-        gpu.setTextColor(Color.WHITE);
+        gpu.setTextColor(Ui.TEXT);
         new Thread(() -> {
             GpuCheck.Result r = GpuCheck.run(a);
             gpuResult = r;
@@ -245,6 +219,14 @@ final class Setup26Screen {
         }, "gpucheck-run").start();
     }
 
+    private TextView gpuLink(String s, View.OnClickListener l) {
+        TextView t = Ui.link(a, s, Ui.LINK, l);
+        t.setPadding(0, Ui.dp(a, 9), Ui.dp(a, 18), Ui.dp(a, 9));
+        gpuButtons.addView(t);
+        return t;
+    }
+
+    /** The GPU line: the check not made yet, running, passed (with its warnings) or failed (with why, and its log). */
     private void gpuCard() {
         GpuCheck.Result r = gpuResult;
         String key = GpuCheck.running ? "running" : r == null ? "none" : r.pass + (GpuCheck.passed(a) ? "p" : "");
@@ -255,14 +237,14 @@ final class Setup26Screen {
         gpuButtons.removeAllViews();
         if (GpuCheck.running) {
             gpu.setText("Checking this phone's GPU… (about 10 s)");
-            gpu.setTextColor(Color.WHITE);
+            gpu.setTextColor(Ui.TEXT);
             return;
         }
         if (r == null || !r.ran || r.pass && !GpuCheck.passed(a)) {
             // (a pass of another build of the app, or of its Turnip, does not count: checked again)
             gpu.setText("First, a short check that this phone's GPU can run them (a few tests with Vulkan, nothing is downloaded).");
-            gpu.setTextColor(Color.WHITE);
-            return;                     // the screen's own button below says "Check the GPU" (onGo)
+            gpu.setTextColor(Ui.TEXT);
+            return;                     // the section's own button says "Check the GPU" (onGo)
         }
         if (r.pass && GpuCheck.passed(a)) {
             String warn = GpuCheck.ramWarning(a);
@@ -297,28 +279,19 @@ final class Setup26Screen {
                         + "what this GPU's driver lacks and helps us add it.");
         gpu.setText(t.toString());
         gpu.setTextColor(ORANGE);
-        button(gpuButtons, "Copy log", v -> {
+        gpuLink("Copy log", v -> {
             ClipboardManager cm = a.getSystemService(ClipboardManager.class);
             cm.setPrimaryClip(ClipData.newPlainText("ASoftware GPU check", r.report));
             android.widget.Toast.makeText(a, "The log is copied", android.widget.Toast.LENGTH_SHORT).show();
         });
-        button(gpuButtons, "Share log", v -> a.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
+        gpuLink("Share log", v -> a.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(Intent.EXTRA_SUBJECT, "ASoftware iOS GPU check: " + android.os.Build.MODEL)
                 .putExtra(Intent.EXTRA_TEXT, r.report), "Send the GPU check's log")));
-        button(gpuButtons, "Check again", v -> runCheck());
+        gpuLink("Check again", v -> runCheck());
     }
 
     private static String gb(long b) {
-        return b >= 1e9 ? String.format(Locale.ROOT, "%.2f GB", b / 1e9)
-                : b >= 1e6 ? String.format(Locale.ROOT, "%.0f MB", b / 1e6) : String.format(Locale.ROOT, "%.0f KB", b / 1e3);
-    }
-
-    private static String minutes(double s) {
-        if (s < 60) {
-            return "less than a minute";
-        }
-        long m = Math.round(s / 60);
-        return m < 60 ? m + " min" : (m / 60) + " h " + (m % 60) + " min";
+        return SetupScreen.gb(b);
     }
 
     private void tick() {
@@ -329,24 +302,103 @@ final class Setup26Screen {
         h.postDelayed(this::tick, 500);
     }
 
+    /** @group's size on the disk, for its state line: measured once it is set up (Installer.removal walks files). */
+    private String sizeOf(String group, boolean installed) {
+        Sized z = PhoneSetup26.WATCH.equals(group) ? sizeWatch : size26;
+        if (installed && !z.was) {
+            z.text = null;
+        }
+        z.was = installed;
+        if (installed && z.text == null && !z.measuring) {
+            z.measuring = true;
+            int os = PhoneSetup26.WATCH.equals(group) ? Guest.WATCH : Guest.IOS26;
+            new Thread(() -> {
+                String t = SetupState.size(Installer.removal(a, os).bytes);
+                z.text = t;
+                z.measuring = false;
+            }, "setup26-size").start();
+        }
+        return z.text == null ? "" : z.text;
+    }
+
+    /** One system's section. */
+    private void section(SetupSection sec, TextView primary, String group, boolean pass, boolean failed) {
+        SetupService.State s = SetupService.state;
+        boolean watch = PhoneSetup26.WATCH.equals(group);
+        boolean installed = PhoneSetup26.installed(a, group);
+        SetupState.Plan live = SetupState.plan26(a, group, false);
+        boolean inRun = live != null && !installed;
+        boolean pending = !inRun && !installed && PhoneSetup26.pending(a, group);
+        String progress = inRun ? SetupState.progress(live, s.pct) : pending ? SetupState.progress(SetupState.plan26(a, group, true), -1) : null;
+        sec.setState(installed ? SetupSection.THERE : inRun ? SetupSection.WORKING : SetupSection.OFF,
+                SetupState.line(installed, inRun, s.paused, progress, sizeOf(group, installed),
+                        SetupState.day(SetupState.installedAt(a, watch ? Guest.WATCH : Guest.IOS26))));
+        sec.device.show(null, installed, false);
+
+        long fr = a.getFilesDir().getUsableSpace();
+        long needFree = watch ? 20_000_000_000L : 46_000_000_000L;
+        String info;
+        if (installed) {
+            info = "Start it from the home screen.";
+        } else if (inRun) {
+            info = s.text;
+        } else if (watch && failed) {
+            info = "This phone's GPU is not supported yet (see iOS 26).";
+        } else if (watch && !pass) {
+            info = "Needs the GPU check first (see iOS 26).";
+        } else if (watch) {
+            info = "About 5 GB from Apple, about an hour. Needs about 20 GB free while it builds, keeps about 4 GB.";
+        } else {
+            info = "About 10.2 GB from Apple, several hours. Needs about 46 GB free while it builds, keeps about 12 GB.";
+        }
+        SetupSection.say(sec.info, info, Ui.DIM);
+        // the room is said outside the details: short of it, the install stops
+        SetupSection.say(sec.extra, installed || inRun || watch && !pass || !watch && failed ? ""
+                : String.format(Locale.ROOT, "%s free on this phone", gb(fr)), fr < needFree ? ORANGE : Ui.DIM);
+        SetupSection.say(sec.error, said.getOrDefault(group, ""), RED);
+
+        boolean other = s.running && !inRun;
+        primary.setText(installed ? "" : inRun ? (s.paused ? "Resume" : "Pause") : !pass ? "Check the GPU" : pending ? "Resume" : "Set up");
+        boolean noButton = installed || !inRun && failed || inRun && !s.paused && !SetupService.pausable(s.step);
+        primary.setVisibility(noButton ? View.GONE : View.VISIBLE);
+        primary.setEnabled(!GpuCheck.running && !other);
+        primary.setAlpha(GpuCheck.running || other ? 0.4f : 1f);
+        sec.follow(inRun);
+        // both at once: only for a new run, and only while the other one is not there
+        CheckBox also = watch ? alsoIos26 : alsoWatch;
+        also.setVisibility(!PhoneSetup26.installed(a, watch ? PhoneSetup26.IOS26 : PhoneSetup26.WATCH) && !installed && !s.running
+                && !pending ? View.VISIBLE : View.GONE);
+    }
+
     private void update() {
         gpuCard();
         boolean pass = GpuCheck.passed(a);
+        boolean failed = !pass && gpuResult != null && gpuResult.ran && !gpuResult.pass;
         SetupService.State s = SetupService.state;
         boolean running = s.running && mine();
         boolean i26done = PhoneSetup26.installed(a, PhoneSetup26.IOS26), wdone = PhoneSetup26.installed(a, PhoneSetup26.WATCH);
-        want26.setText(i26done ? "iOS 26 ✓ installed" : "iOS 26 (about 10.2 GB from Apple; needs ~46 GB free while it builds, keeps ~12 GB)");
-        wantWatch.setText(wdone ? "watchOS ✓ installed" : "watchOS 27.2 (about 5 GB from Apple; needs ~20 GB free while it builds, keeps ~4 GB)");
-        want26.setEnabled(!running && !i26done);
-        wantWatch.setEnabled(!running && !wdone);
-        choice.setVisibility(pass ? View.VISIBLE : View.GONE);
 
+        // the GPU line stays quiet once both are there and it had nothing to warn about
+        GpuCheck.Result r = gpuResult;
+        boolean quiet = pass && r != null && !r.nosparse && r.slow.isEmpty() && GpuCheck.ramWarning(a).isEmpty();
+        s26.main.setVisibility(quiet && i26done && wdone ? View.GONE : View.VISIBLE);
+        section(s26, primary26, PhoneSetup26.IOS26, pass, failed);
+        section(sw, primaryWatch, PhoneSetup26.WATCH, pass, failed);
+
+        // -- This setup
+        boolean started = PhoneSetup26.work(a).isDirectory();
+        boolean show = pass && (running || started) || mine() && s.error != null;
+        run.root.setVisibility(show ? View.VISIBLE : View.GONE);
+        // (the hairline above it goes with it)
+        root.getChildAt(3).setVisibility(show ? View.VISIBLE : View.GONE);
+        run.follow(running);
         long fr = a.getFilesDir().getUsableSpace(), need = PhoneSetup26.needBytes(a);
         String peak = PhoneSetup26.startFree > 0 ? String.format(Locale.ROOT, "; this run's peak so far %s",
                 gb(Math.max(0, PhoneSetup26.startFree - PhoneSetup26.lowestFree))) : "";
-        free.setText(String.format(Locale.ROOT, "%s free on this phone%s%s", gb(fr), need > 0 && running ? "; the next step needs about " + gb(need) : "", peak));
-        free.setTextColor(fr < need ? ORANGE : DIM);
-        free.setVisibility(pass ? View.VISIBLE : View.GONE);
+        SetupSection.say(run.info, String.format(Locale.ROOT, "%s free on this phone%s%s", gb(fr),
+                need > 0 && running ? "; the next step needs about " + gb(need) : "", peak), fr < need ? ORANGE : Ui.DIM);
+        run.setState(running ? SetupSection.WORKING : SetupSection.OFF,
+                running ? (s.text.isEmpty() ? "Working" : s.text) : s.paused ? "Paused" : "Stopped");
 
         List<IpswFetch.Item> items = running ? s.items : java.util.Collections.emptyList();
         long got = 0, size = 0;
@@ -356,7 +408,6 @@ final class Setup26Screen {
             row(it.member, it.done.get(), it.total, it.state, it.error);
         }
         boolean fetching = running && s.step.endsWith(":fetch");
-        ((View) total.getParent()).setVisibility(pass && (running || PhoneSetup26.work(a).isDirectory()) ? View.VISIBLE : View.GONE);
         if (size > 0 && fetching) {
             total.setText(String.format(Locale.ROOT, "%s of %s from Apple", gb(got), gb(size)));
             totalBar.setProgress((int) (got * 1000 / size));
@@ -364,50 +415,42 @@ final class Setup26Screen {
             total.setText(running ? s.text : "Downloads");
             totalBar.setProgress(running && s.pct >= 0 ? s.pct * 10 : 0);
         }
+        String more;
         if (fetching && s.mbps > 0 && size > 0) {
-            details.setText(String.format(Locale.ROOT, "%.1f MB/s · %s left · %d connections%s", s.mbps, minutes((size - got) / 1e6 / s.mbps),
-                    s.connections, s.servers.isEmpty() ? "" : " · " + s.servers));
+            more = String.format(Locale.ROOT, "%.1f MB/s · %s left · %d connections%s", s.mbps, SetupScreen.minutes((size - got) / 1e6 / s.mbps),
+                    s.connections, s.servers.isEmpty() ? "" : " · " + s.servers);
         } else if (running && s.waitingForNetwork) {
-            details.setText("No internet connection: it goes on by itself when the phone is online again");
+            more = "No internet connection: it goes on by itself when the phone is online again";
         } else if (running && s.waitingForWifi) {
-            details.setText("Waiting for Wi-Fi (Download on Wi-Fi only is on)");
+            more = "Waiting for Wi-Fi (Download on Wi-Fi only is on)";
         } else if (running && s.held) {
-            details.setText(PhoneSetup26.lowBattery(a) ? "Waiting for the charger: the battery is low"
-                    : s.paused ? "Paused" : "The phone is hot: the build waits until it cools down, then goes on");
+            more = PhoneSetup26.lowBattery(a) ? "Waiting for the charger: the battery is low"
+                    : s.paused ? "Paused" : "The phone is hot: the build waits until it cools down, then goes on";
         } else if (running && s.paused) {
-            details.setText("Paused: what is done stays, Resume goes on from there");
+            more = "Paused: what is done stays, Resume goes on from there";
         } else if (running && !PhoneSetup26.charging(a)) {
-            details.setText("Not on the charger: it keeps going, and waits for the charger below 15 %");
+            more = "Not on the charger: it keeps going, and waits for the charger below 15 %";
         } else {
-            details.setText("");
+            more = "";
         }
+        SetupSection.say(run.extra, more, Ui.DIM);
 
-        String sig = (pass ? "p" : "") + PhoneSetup26.groups(a) + want26.isChecked() + wantWatch.isChecked();
+        String sig = (pass ? "p" : "") + PhoneSetup26.groups(a) + started;
         if (!sig.equals(steps.getTag())) {
             steps.setTag(sig);
             steps.removeAllViews();
             stepRows.clear();
-            List<String> gs = running || PhoneSetup26.work(a).isDirectory() ? PhoneSetup26.groups(a) : null;
-            if (gs == null) {
-                gs = new java.util.ArrayList<>();
-                gs.add(PhoneSetup26.SHARED);
-                if (wantWatch.isChecked()) {
-                    gs.add(PhoneSetup26.WATCH);
-                }
-                if (want26.isChecked()) {
-                    gs.add(PhoneSetup26.IOS26);
-                }
-            }
-            for (String g : gs) {
+            for (String g : PhoneSetup26.groups(a)) {
                 TextView head = text(steps, PhoneSetup26.SHARED.equals(g) ? "Shared part" : PhoneSetup26.IOS26.equals(g) ? "iOS 26" : "watchOS",
-                        13, DIM);
-                head.setPadding(0, steps.getChildCount() > 1 ? 24 : 0, 0, 8);
+                        13, Ui.FAINT);
+                head.setPadding(0, steps.getChildCount() > 1 ? Ui.dp(a, 12) : 0, 0, Ui.dp(a, 4));
                 for (String[] st : PhoneSetup26.steps(g)) {
-                    stepRows.put(g + ":" + st[0], text(steps, "○  " + st[1], 15, GRAY));
+                    TextView t = text(steps, "○  " + st[1], 14.5f, GRAY);
+                    t.setPadding(0, Ui.dp(a, 5), 0, Ui.dp(a, 5));
+                    stepRows.put(g + ":" + st[0], t);
                 }
             }
         }
-        steps.setVisibility(pass && !stepRows.isEmpty() ? View.VISIBLE : View.GONE);
         for (Map.Entry<String, TextView> e : stepRows.entrySet()) {
             String[] k = e.getKey().split(":");
             String label = "";
@@ -423,7 +466,7 @@ final class Setup26Screen {
             } else if (running && e.getKey().equals(s.step)) {
                 t.setText("●  " + label + (s.pct >= 0 && !s.step.endsWith(":fetch") ? " (" + s.pct + "%)" : "")
                         + (s.text.isEmpty() || s.step.endsWith(":fetch") ? "" : "\n    " + s.text));
-                t.setTextColor(Color.WHITE);
+                t.setTextColor(Ui.TEXT);
             } else {
                 t.setText("○  " + label);
                 t.setTextColor(GRAY);
@@ -434,22 +477,7 @@ final class Setup26Screen {
         String note = Helper.memoryNote;
         memory.setText(note == null ? "" : note);
         memory.setVisibility(running && note != null ? View.VISIBLE : View.GONE);
-        if (mine() && s.error != null) {
-            error.setText(s.error);
-            error.setTextColor(RED);
-        } else if (mine() && s.finished) {
-            error.setText("Set up. Choose iOS 26 or watchOS on the home screen and start it.");
-            error.setTextColor(GREEN);
-        } else if (!running && error.getCurrentTextColor() != RED) {
-            error.setText("");
-        }
-        boolean started = PhoneSetup26.work(a).isDirectory() && !(i26done || wdone) || PhoneSetup26.work(a).isDirectory()
-                && (PhoneSetup26.wants(a, PhoneSetup26.IOS26) && !i26done || PhoneSetup26.wants(a, PhoneSetup26.WATCH) && !wdone);
-        go.setText(!pass ? "Check the GPU" : running ? (s.paused ? "Resume" : "Pause") : started ? "Resume install" : "Install");
-        // a failed check has its own Check again; a pass from another build of the app (an update) needs this button
-        go.setVisibility(!pass && gpuResult != null && gpuResult.ran && !gpuResult.pass ? View.GONE
-                : running && !s.paused && !SetupService.pausable(s.step) ? View.GONE : View.VISIBLE);
-        go.setEnabled(!GpuCheck.running);
+        SetupSection.say(run.error, mine() && s.error != null ? s.error : "", RED);
         cancel.setVisibility(pass && (running || started) ? View.VISIBLE : View.GONE);
     }
 
@@ -457,23 +485,8 @@ final class Setup26Screen {
         TextView[] r = fileRows.get(member);
         ProgressBar b = fileBars.get(member);
         if (r == null) {
-            line(files);
-            LinearLayout head = new LinearLayout(a);
-            head.setOrientation(LinearLayout.HORIZONTAL);
-            TextView name = new TextView(a);
-            name.setTextSize(15);
-            name.setTextColor(Color.WHITE);
-            name.setText(NAMES.getOrDefault(member, member.substring(member.lastIndexOf('/') + 1)));
-            TextView st = new TextView(a);
-            st.setTextSize(13);
-            st.setTextColor(GRAY);
-            head.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-            head.addView(st, new LinearLayout.LayoutParams(-2, -2));
-            files.addView(head);
-            b = new ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal);
-            b.setMax(1000);
-            files.addView(b, new LinearLayout.LayoutParams(-1, 12));
-            r = new TextView[] {name, st};
+            r = run.fileRow(files, NAMES.getOrDefault(member, member.substring(member.lastIndexOf('/') + 1)), fileRows.isEmpty());
+            b = run.bar(files, 3);
             fileRows.put(member, r);
             fileBars.put(member, b);
         }
@@ -487,7 +500,7 @@ final class Setup26Screen {
                 break;
             case "verifying":
                 state = "Checking…";
-                color = Color.WHITE;
+                color = Ui.TEXT;
                 break;
             case "failed":
                 state = "✕ " + (err == null ? "failed" : err);
@@ -495,7 +508,7 @@ final class Setup26Screen {
                 break;
             case "fetching":
                 state = gb(d) + " of " + gb(size);
-                color = Color.WHITE;
+                color = Ui.TEXT;
                 break;
             default:
                 state = d > 0 ? gb(d) + " of " + gb(size) : gb(size);

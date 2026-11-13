@@ -99,10 +99,11 @@ final class SetupState {
 
     // -- what feeds it
 
-    /** The plan of iOS 16's setup, or null when the service does not run it. */
-    static Plan plan16(Context c) {
+    /** The plan of iOS 16's setup, or null when the service does not run it (@stopped: or one begun and stopped is left). */
+    static Plan plan16(Context c, boolean stopped) {
         SetupService.State s = SetupService.state;
-        if (!s.running || "a26".equals(s.target)) {
+        boolean running = s.running && !"a26".equals(s.target);
+        if (!running && !(stopped && PhoneSetup.work(c).isDirectory() && !PhoneSetup.done(c, "firststart"))) {
             return null;
         }
         Plan p = new Plan();
@@ -115,10 +116,17 @@ final class SetupState {
         return p;
     }
 
-    /** The plan of @group (PhoneSetup26.IOS26 or WATCH) inside the running iOS 26 / watchOS setup, or null when it is not in it. */
-    static Plan plan26(Context c, String group) {
+    /**
+     * The plan of @group (PhoneSetup26.IOS26 or WATCH) inside the iOS 26 / watchOS setup, or null when it is not in it:
+     * the running one, or (@stopped) the one that was begun and stopped, whose work folder is still there.
+     */
+    static Plan plan26(Context c, String group, boolean stopped) {
         SetupService.State s = SetupService.state;
-        if (!s.running || !"a26".equals(s.target) || !PhoneSetup26.groups(c).contains(group)) {
+        boolean running = s.running && "a26".equals(s.target);
+        if (!running && !(stopped && PhoneSetup26.pending(c, group))) {
+            return null;
+        }
+        if (!PhoneSetup26.groups(c).contains(group)) {
             return null;
         }
         Plan p = new Plan();
@@ -131,10 +139,10 @@ final class SetupState {
             String[] a = k.split(":");
             return PhoneSetup26.done(c, a[0], a[1]);
         };
-        p.current = s.step;
+        p.current = running ? s.step : "";
         // the other system's steps run first (watchOS before iOS 26) while this one's own have not begun
         String other = PhoneSetup26.IOS26.equals(group) ? PhoneSetup26.WATCH : PhoneSetup26.IOS26;
-        if (s.step.startsWith(other + ":")) {
+        if (running && s.step.startsWith(other + ":")) {
             p.waitsFor = PhoneSetup26.WATCH.equals(other) ? "watchOS" : "iOS 26";
         }
         return p;
@@ -142,14 +150,14 @@ final class SetupState {
 
     /** The home screen's and the setup page's progress text of @os while its setup runs: "step 3 of 12, 42%", else null. */
     static String running(Context c, int os) {
-        Plan p = os == Guest.IOS16 ? plan16(c) : plan26(c, os == Guest.WATCH ? PhoneSetup26.WATCH : PhoneSetup26.IOS26);
+        Plan p = os == Guest.IOS16 ? plan16(c, false) : plan26(c, os == Guest.WATCH ? PhoneSetup26.WATCH : PhoneSetup26.IOS26, false);
         return progress(p, SetupService.state.pct);
     }
 
     /** @os is the system the running setup is making (a paused one counts). */
     static boolean settingUp(Context c, int os) {
-        return SetupService.state.running && (os == Guest.IOS16 ? plan16(c) != null
-                : plan26(c, os == Guest.WATCH ? PhoneSetup26.WATCH : PhoneSetup26.IOS26) != null);
+        return SetupService.state.running && (os == Guest.IOS16 ? plan16(c, false) != null
+                : plan26(c, os == Guest.WATCH ? PhoneSetup26.WATCH : PhoneSetup26.IOS26, false) != null);
     }
 
     /** When @os was set up: its main disk's time (a file the setup or an import wrote last), 0 when unknown. */
