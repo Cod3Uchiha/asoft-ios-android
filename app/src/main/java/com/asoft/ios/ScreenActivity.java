@@ -668,8 +668,10 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
     static String goBackText(android.content.Context c, int os, Guest.Snap snap) {
         String hw = Guest.hardware(c, os, snap.tag);
         return (os == Guest.WATCH ? "watchOS" : "iOS") + " goes back to how it was at " + when(snap)
-                + ": what you did after that (settings, apps, files) is undone.\n\n"
-                + snap.date + " · " + snap.size + " · opens with " + hw
+                + ": what you did after that (settings, apps, files) is undone."
+                + (os == Guest.IOS26 && !Ipa26.apps(c).isEmpty() ? " An app added from an .ipa (" + Ipa26.apps(c)
+                + ") goes too if it was added after that save." : "")
+                + "\n\n" + snap.date + " · " + snap.size + " · opens with " + hw
                 + (Guest.otherHardware(c, os, snap.tag) ? " (its own; boots keep the setting, "
                 + Guest.ramMiB(c, os) / 1024 + " GB)" : "");
     }

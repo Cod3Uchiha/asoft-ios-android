@@ -1291,6 +1291,7 @@ final class PhoneSetup26 {
                 File old = new File(f.getPath() + ".old");
                 old.delete();
                 f.renameTo(old);
+                Ipa26.dropTc(c, n);
                 AppLog.note(c, "setup26: " + n + " rested on the old disk: kept as " + old.getName());
             }
         }

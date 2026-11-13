@@ -382,6 +382,24 @@ final class Guest {
     }
 
     /**
+     * The trust cache an .ipa install made for the iOS 26 user disk in use (Ipa26): the cache the disk booted with
+     * plus the CDHashes of its apps. Beside the disk, so a disk that is erased or replaced takes it along.
+     */
+    static File appsTc26(Context c) {
+        return new File(c.getFilesDir(), diskName(c, IOS26) + ".apps.tc");
+    }
+
+    /** The trust cache iOS 26 boots the user disk in use with: its own from an .ipa install, else the shared one. */
+    static File tc26(Context c) {
+        File own = appsTc26(c);
+        if (own.isFile()) {
+            return own;
+        }
+        File g = dir26(c);
+        return new File(g, aodDisk(userDisk(c, IOS26)) && aodFiles(g) ? AOD26_TC : "root26m.tc");
+    }
+
+    /**
      * "ios16-user", "ios26-user", or "ios26-2x-user" for iOS 26 with the 2x screen: iOS keeps its
      * screen's scale in its MobileGestalt cache from the first boot on, so each scale has its own disk
      * (its own iPhone, settings, apps and saves).
@@ -438,6 +456,7 @@ final class Guest {
         for (String d : diskNames(forOs)) {
             e.remove(staleKey(d)).remove(dirtyKey(d)).remove(CHECKED + d).remove(keptRamKey(d));
             Screen26.forget(c, d);
+            Ipa26.forget(c, d + ".qcow2");
         }
         if (forOs == IOS26) {
             e.remove(SCALE26_KEY).remove(ramKey(IOS26));
@@ -997,6 +1016,11 @@ final class Guest {
         return c.getSharedPreferences("guest", Context.MODE_PRIVATE).getBoolean(staleKey(c, forOs), false);
     }
 
+    /** @forOs's disk is not where its quick save was (an .ipa was put on it offline): the save is a way back only. */
+    static void markQuickStale(Context c, int forOs) {
+        setQuickStale(c, forOs, true);
+    }
+
     private static void setQuickStale(Context c, int forOs, boolean stale) {
         c.getSharedPreferences("guest", Context.MODE_PRIVATE).edit().putBoolean(staleKey(c, forOs), stale).commit();
     }
@@ -1202,9 +1226,10 @@ final class Guest {
         userDisk(c, forOs).delete();
         thumbFile(c, forOs).delete();
         String prefix = diskName(c, forOs) + ".";
+        Ipa26.forget(c, prefix.substring(0, prefix.length() - 1) + ".qcow2");
         File[] f = c.getFilesDir().listFiles((d, n) -> n.startsWith(prefix)
                 && (n.endsWith(".leds") || n.endsWith(".cpus") || n.endsWith(".clock") || n.endsWith(".ram")
-                || n.endsWith(".nokbd")));
+                || n.endsWith(".nokbd") || n.endsWith(".apps.tc")));
         if (f != null) {
             for (File x : f) {
                 x.delete();
@@ -2113,7 +2138,7 @@ final class Guest {
             bootRamMiB = ram;
             dtree = ov.containsKey("dtree") && !watch ? new File(g, ov.get("dtree")).getPath()
                     : tree(c, watch ? WatchProfile.part(c, WatchProfile.DTREE) : new File(g, tree), ram, twoX).getPath();
-            tc = watch ? WatchProfile.part(c, WatchProfile.TC).getPath() : new File(g, aod ? AOD26_TC : "root26m.tc").getPath();
+            tc = watch ? WatchProfile.part(c, WatchProfile.TC).getPath() : tc26(c).getPath();
             AppLog.note(c, "guest RAM " + ram + " MiB" + (resumed ? " (the save's)" : ""));
         }
         AppLog.note(c, "screen " + fb26W + "x" + fb26H + (twoX ? " (2x)" : "") + ", device tree " + dtree

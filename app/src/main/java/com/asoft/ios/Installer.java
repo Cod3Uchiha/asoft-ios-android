@@ -182,6 +182,7 @@ final class Installer {
             File old = new File(f.getPath() + ".old");
             old.delete();
             f.renameTo(old);
+            Ipa26.dropTc(c, name);
             AppLog.note(c, "import: " + name + " rested on the old disk: kept as " + old.getName());
         }
     }
