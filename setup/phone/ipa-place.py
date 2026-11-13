@@ -6,7 +6,11 @@ host handed over (a zip followed by zeros up to a whole sector, which zipfile ac
 through RAM. Prints "ASOFT: ipa-app NAME BUNDLEID" and "ASOFT: ipa-new 1|0" (0: that app was there already: its
 files are replaced, LaunchServices knows it), and writes NAME to /work/ipa.name and 1|0 to /work/ipa.new.
 
-A reinstall replaces an app this placing made (it leaves .asoft-ipa in it), never a system app of the same name.
+An app of the same folder name that is already there is replaced, unless it is a system app: no .asoft-ipa mark (which
+an earlier placing here leaves) and an Info.plist (binary or XML) that names a CFBundleIdentifier starting with com.apple.
+or cannot be read. An unmarked third-party app (put there by hand, or by a placing before the mark existed) is replaced
+like a marked one and gets the mark. It counts as NEW for LaunchServices (ipa-new 1) unless the old and the new
+CFBundleIdentifier are equal; "ASOFT: ipa-replaced NAME OLDID OLDVERSION" says what was replaced.
 Refused with a plain message: no Payload/*.app, a name that leaves the app folder, not enough room on the disk.
 """
 import os
@@ -30,6 +34,16 @@ def fail(msg):
     for p in partial:
         shutil.rmtree(p, ignore_errors=True)
     sys.exit(2)
+
+
+def read_plist(path):
+    """The Info.plist at PATH (binary or XML) as a dict, None when it is missing or unreadable."""
+    try:
+        with open(path, 'rb') as f:
+            d = plistlib.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
 
 
 def main():
@@ -68,14 +82,23 @@ def main():
     print('ASOFT: ipa-app %s %s' % (app, bundle_id or '?'))
 
     dst = os.path.join(root, 'Applications', app)
-    new = 0 if os.path.exists(dst) else 1
+    new = 1
+    if os.path.lexists(dst):
+        old = read_plist(os.path.join(dst, 'Info.plist'))
+        old_id = str(old.get('CFBundleIdentifier', '')) if old else ''
+        marked = os.path.exists(os.path.join(dst, MARK))
+        # a system app of the same name is never replaced
+        if not marked and (not old_id or old_id.startswith('com.apple.')):
+            fail('iOS 26 has an app called %s of its own; this .ipa cannot replace it' % app)
+        # LaunchServices knows the app as it is only when its id stays the same
+        # (a marked app whose plist cannot be read was ours: as before, the same app)
+        new = 0 if (old_id and old_id == bundle_id) or (marked and not old_id) else 1
+        ver = str((old or {}).get('CFBundleShortVersionString') or (old or {}).get('CFBundleVersion') or '?')
+        print('ASOFT: ipa-replaced %s %s %s' % (app, old_id or '?', ver))
     print('ASOFT: ipa-new %d' % new)
     with open('/work/ipa.new', 'w') as f:
         f.write(str(new))
     if os.path.lexists(dst):
-        # only an app this placing made may be replaced: not a system app that has the same name
-        if not os.path.exists(os.path.join(dst, MARK)):
-            fail('iOS 26 has an app called %s of its own; this .ipa cannot replace it' % app)
         shutil.rmtree(dst)
     partial.append(dst)
     # the mark first: a placing that dies half way leaves a folder a retry may replace

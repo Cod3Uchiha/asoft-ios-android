@@ -46,6 +46,8 @@ final class Ipa26 {
     static final class Result {
         String app = "", bundleId = "";
         boolean isNew = true;
+        /** "AngryBirds2.app (was com.rovio.baba 25.0)" when the job replaced an app that was there already, else "". */
+        String replaced = "";
         int noget;                                  // files that had get-task-allow switched off
         final List<String> noSignature = new ArrayList<>();
         final List<String> warnings = new ArrayList<>();
@@ -256,7 +258,7 @@ final class Ipa26 {
             remember(c, res.app);
             res.seconds = (System.currentTimeMillis() - t0) / 1000;
             AppLog.note(c, "ipa26: " + (name == null ? "?" : name) + " -> " + res.app + " (" + res.bundleId + ") on " + disk.getName()
-                    + (res.isNew ? ", new" : ", replaced") + ", get-task-allow off in " + res.noget + " file(s), no usable signature: "
+                    + (res.replaced.isEmpty() ? res.isNew ? ", new" : ", replaced" : ", replaced " + res.replaced + (res.isNew ? ", other id" : "")) + ", get-task-allow off in " + res.noget + " file(s), no usable signature: "
                     + res.noSignature + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
             Installer.deleteTree(jd);
             return res;
@@ -265,7 +267,7 @@ final class Ipa26 {
         }
     }
 
-    private static void line26(String text, Result res, String[] fail) {
+    static void line26(String text, Result res, String[] fail) {
         String t = text.trim();
         if (t.startsWith("ipa-app ")) {
             String[] a = t.substring(8).split(" ", 2);
@@ -273,6 +275,12 @@ final class Ipa26 {
             res.bundleId = a.length > 1 && !"?".equals(a[1]) ? a[1] : "";
         } else if (t.startsWith("ipa-new ")) {
             res.isNew = t.endsWith("1");
+        } else if (t.startsWith("ipa-replaced ")) {
+            String[] a = t.substring(13).split(" ", 3);
+            if (!res.replaced.isEmpty()) {
+                return;     // (a retry sees the first try's app as the old one)
+            }
+            res.replaced = a[0] + " (was " + (a.length > 1 ? a[1] : "?") + " " + (a.length > 2 ? a[2] : "?") + ")";
         } else if (t.startsWith("ipa-noget ")) {
             try {
                 res.noget = Integer.parseInt(t.substring(10).trim());
@@ -332,7 +340,9 @@ final class Ipa26 {
     /** The text under the result: what the job saw, in plain words. */
     static String summary(Result r) {
         StringBuilder s = new StringBuilder();
-        s.append(r.app).append(r.isNew ? " is on iOS 26's disk." : " was replaced on iOS 26's disk.");
+        // (the job says when an app of that name was there: "replaced AngryBirds2.app (was <old id> <old version>)")
+        s.append(!r.replaced.isEmpty() ? "Replaced " + r.replaced + " on iOS 26's disk." : r.isNew ? r.app + " is on iOS 26's disk."
+                : r.app + " was replaced on iOS 26's disk.");
         s.append(" Start iOS 26 now: it boots (the first start after this takes about 7 minutes to the lock screen, "
                 + "and the icon shows a few minutes later).");
         if (r.noget > 0) {
