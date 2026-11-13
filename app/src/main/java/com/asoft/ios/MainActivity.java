@@ -3,6 +3,9 @@ package com.asoft.ios;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -15,12 +18,15 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -46,6 +52,8 @@ public class MainActivity extends Activity {
         DeviceView device;
         View dot;
         TextView status, detail, primary, secondary, back, menu;
+        /** iOS 26 only: "Install an .ipa…" and the one line of the apps added that way (Ipa26.apps). */
+        TextView ipa, apps;
         /** "Report this crash", while the system's last end was its own (CrashReport.pendingFor). */
         TextView report;
         /** The picture on the device, and the file's time it was read at. */
@@ -267,6 +275,14 @@ public class MainActivity extends Activity {
         c.back.setPadding(0, dp(10), dp(8), dp(2));
         c.back.setVisibility(View.GONE);
         col.addView(c.back, new LinearLayout.LayoutParams(-2, -2));
+
+        c.ipa = link("Install an .ipa…", LINK, v -> installIpa());
+        c.ipa.setTextSize(13.5f);
+        c.ipa.setPadding(0, dp(10), dp(8), dp(2));
+        c.ipa.setVisibility(View.GONE);
+        col.addView(c.ipa, new LinearLayout.LayoutParams(-2, -2));
+        c.apps = text(col, "", 12.5f, FAINT);
+        c.apps.setVisibility(View.GONE);
         return root;
     }
 
@@ -616,6 +632,9 @@ public class MainActivity extends Activity {
         if (crash != null) {
             m.getMenu().add(0, 6, 0, "Report the last crash…");
         }
+        if (os == Guest.IOS26) {
+            m.getMenu().add(0, 7, 0, "Install an .ipa…");
+        }
         m.getMenu().add(0, 4, 0, os == Guest.WATCH ? "Erase the watch…" : "Erase the iPhone…");
         m.getMenu().add(0, 5, 0, "Remove from this phone…");
         m.setOnMenuItemClickListener(item -> {
@@ -625,6 +644,7 @@ public class MainActivity extends Activity {
                 case 3: chooseRam(os); break;
                 case 4: askErase(os); break;
                 case 6: CrashReport.show(this, crash); break;
+                case 7: installIpa(); break;
                 default: askRemove(os);
             }
             return true;
@@ -633,6 +653,10 @@ public class MainActivity extends Activity {
     }
 
     private void bootCold(int os) {
+        if (Ipa26.busy()) {
+            Toast.makeText(this, "An .ipa is being installed: wait until it is done.", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (Guest.running() && Guest.os(this) != os) {
             open(os);       // says to close the other one first
             return;
@@ -737,6 +761,154 @@ public class MainActivity extends Activity {
         }, "remove").start();
     }
 
+    // -- an .ipa into iOS 26 (Ipa26), from its device
+
+    private static final int PICK_IPA = 2;
+
+    /**
+     * "Install an .ipa…": says why not when iOS runs or iOS 26 is not ready (Ipa26.refusal), else offers the .ipa files
+     * waiting in the import folder (adb push) and a picker.
+     */
+    private void installIpa() {
+        String why = Ipa26.refusal(this);
+        if (why != null) {
+            new AlertDialog.Builder(this).setTitle("Install an .ipa").setMessage(why).setPositiveButton("OK", null).show();
+            return;
+        }
+        File[] waiting = Ipa26.waiting(this);
+        if (waiting.length == 0) {
+            pickIpa();
+            return;
+        }
+        String[] names = new String[waiting.length + 1];
+        for (int i = 0; i < waiting.length; i++) {
+            names[i] = String.format(java.util.Locale.ROOT, "%s (%.0f MB)", waiting[i].getName(), waiting[i].length() / 1e6);
+        }
+        names[waiting.length] = "Choose a file\u2026";
+        new AlertDialog.Builder(this)
+                .setTitle("Install an .ipa")
+                .setItems(names, (d, i) -> {
+                    if (i == waiting.length) {
+                        pickIpa();
+                        return;
+                    }
+                    try {
+                        askIpa(new FileInputStream(waiting[i]), waiting[i].length(), waiting[i].getName(), waiting[i]);
+                    } catch (IOException e) {
+                        Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void pickIpa() {
+        startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PICK_IPA);
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != PICK_IPA || res != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        Uri u = data.getData();
+        long size = -1;
+        String name = "the .ipa";
+        try (Cursor c = getContentResolver().query(u, new String[] {OpenableColumns.SIZE, OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                if (!c.isNull(0)) {
+                    size = c.getLong(0);
+                }
+                if (!c.isNull(1)) {
+                    name = c.getString(1);
+                }
+            }
+        }
+        try {
+            askIpa(getContentResolver().openInputStream(u), size, name, null);
+        } catch (IOException | RuntimeException e) {
+            Toast.makeText(this, String.valueOf(e.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Refuses in plain words, else asks once what an .ipa install does, then installs in the background. */
+    private void askIpa(InputStream in, long total, String name, File done) {
+        String why = Ipa26.refusal(this);
+        if (why != null) {
+            closeQuietly(in);
+            new AlertDialog.Builder(this).setTitle("Install an .ipa").setMessage(why).setPositiveButton("OK", null).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Install " + name + "?")
+                .setMessage("The app goes onto iOS 26's disk while iOS is off, so iOS 26 boots at the next start: the first time takes "
+                        + "about 7 minutes to the lock screen. Your newest save stays as a way back, but going back to it removes "
+                        + "the app again.\n\nApps made for developers work; apps from the App Store only if they are decrypted.")
+                .setPositiveButton("Install", (d, w) -> runIpa(in, total, name, done))
+                .setNegativeButton("Cancel", (d, w) -> closeQuietly(in))
+                .show();
+    }
+
+    private static void closeQuietly(InputStream in) {
+        try {
+            in.close();
+        } catch (IOException ignored) {
+            // nothing read
+        }
+    }
+
+    /** The install, in front of a progress box that nothing else can be done behind; its result replaces the box. */
+    private void runIpa(InputStream in, long total, String name, File done) {
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(24), dp(8), dp(24), dp(4));
+        TextView what = text(body, "Starting\u2026 keep this screen open.", 15, TEXT);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(1000);
+        bar.setIndeterminate(true);
+        body.addView(bar, top(new LinearLayout.LayoutParams(-1, dp(24)), dp(12)));
+        AlertDialog box = new AlertDialog.Builder(this).setTitle("Installing " + name).setView(body).setCancelable(false).show();
+        AppExit.begin(this, AppExit.IMPORT, "an .ipa install into iOS 26 was running");
+        new Thread(() -> {
+            String result;
+            boolean ok = false;
+            try (InputStream s = in) {
+                Ipa26.Result r = Ipa26.install(this, new java.io.BufferedInputStream(s, 1 << 20), total, name, (said, pct) -> runOnUiThread(() -> {
+                    bar.setIndeterminate(pct < 0);
+                    if (pct >= 0) {
+                        bar.setProgress(pct * 10);
+                    }
+                    what.setText(said + "\u2026");
+                }), () -> false);
+                if (done != null) {
+                    done.delete();
+                }
+                result = Ipa26.summary(r);
+                ok = true;
+            } catch (IOException | RuntimeException e) {
+                result = "Not installed: " + e.getMessage();
+                AppLog.note(this, "ipa install stopped: " + e);
+            } finally {
+                AppExit.end(this, AppExit.IMPORT);
+            }
+            String text = result;
+            boolean good = ok;
+            runOnUiThread(() -> {
+                getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                if (isDestroyed()) {
+                    return;
+                }
+                box.dismiss();
+                shown = "";
+                refresh();
+                new AlertDialog.Builder(this).setTitle(good ? "Installed" : "Not installed").setMessage(text)
+                        .setPositiveButton("OK", null).show();
+            });
+        }, "ipa-install").start();
+    }
+
     private void askTurnOff() {
         new Thread(() -> {
             // the quick save's time for the text (from QEMU: off the UI thread)
@@ -776,6 +948,13 @@ public class MainActivity extends Activity {
         } catch (RuntimeException e) {
             return date.length() >= 16 ? date.substring(5, 16) : date;
         }
+    }
+
+    /** iOS 26's "Install an .ipa…" (only while it is set up) and the line of the apps added that way. */
+    private static void showIpa(Panel c, boolean there, String apps) {
+        c.ipa.setVisibility(there ? View.VISIBLE : View.GONE);
+        c.apps.setText("Added from .ipa files: " + apps);
+        c.apps.setVisibility(there && !apps.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
     /** Shows @c's way back @snap (null: hides it). */
@@ -829,6 +1008,10 @@ public class MainActivity extends Activity {
 
     /** Opens iOS @os: its screen starts it (quick boot when it was saved). One QEMU at a time. */
     private void open(int os) {
+        if (Ipa26.busy()) {
+            Toast.makeText(this, "An .ipa is being installed: wait until it is done.", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (Guest.running() && Guest.os(this) != os) {
             String other = Guest.osName(Guest.os(this));
             new AlertDialog.Builder(this)
@@ -1036,6 +1219,7 @@ public class MainActivity extends Activity {
             detail(c, busy ? SetupService.state.text : "Downloads about 10 GB from Apple and builds it on this phone."
                     + (debug ? " (No " + new File(Guest.dir26(this), missing).getName() + ".)" : ""));
             buttons(c, busy ? "Show" : "Set up", false);
+            showIpa(c, false, "");
             showBack(c, null);
             showCrash(c, null);
             c.device.show(null, false, false);
@@ -1046,6 +1230,7 @@ public class MainActivity extends Activity {
             state(c, STARTING, "Starting…");
             detail(c, what == null ? "" : what);
             buttons(c, "Open", false);
+            showIpa(c, true, "");
             showBack(c, null);
             showCrash(c, null);
             return;
@@ -1079,8 +1264,10 @@ public class MainActivity extends Activity {
             String text = (crashLine(crash) + error(Guest.IOS26, up) + info).trim();
             String statusText = st + (twoX && !up ? "  ·  2x screen" : "");
             Bitmap shot = shot(c);
+            String apps = Ipa26.apps(this);
             runOnUiThread(() -> {
                 state(c, starting ? STARTING : up ? RUNNING : READY, statusText);
+                showIpa(c, true, apps);
                 detail(c, text);
                 showBack(c, back);
                 showCrash(c, crash);

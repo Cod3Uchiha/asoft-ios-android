@@ -27,7 +27,7 @@ import java.io.InputStream;
  * with the phone on USB, pushes it to this app's import folder), or from a file picked here.
  */
 public class SetupActivity extends Activity {
-    private static final int PICK = 1, PICK_IPA = 2;
+    private static final int PICK = 1;
     private LinearLayout box;
     private TextView status;
     private ProgressBar bar;
@@ -236,9 +236,6 @@ public class SetupActivity extends Activity {
         }
         section26 = from26.view();      // (view() takes it out of its old parent: call it only here)
         box.addView(section26);
-        if (Guest.available26(this)) {
-            ipaSection();
-        }
         TextView pc = text("Or bring it from your PC", 18, Color.WHITE);
         pc.setPadding(0, 56, 0, 28);
         text("1. Install ASoftware iOS (iOS 16) on a Windows PC.\n"
@@ -269,57 +266,9 @@ public class SetupActivity extends Activity {
         status.setGravity(Gravity.START);
     }
 
-    /** An .ipa into iOS 26 (Ipa26): the files waiting in the import folder, and a picker. */
-    private void ipaSection() {
-        TextView head = text("Install an .ipa in iOS 26", 18, Color.WHITE);
-        head.setPadding(0, 56, 0, 28);
-        text("Adds an app from an .ipa file to iOS 26. The app goes onto iOS 26's disk while iOS is off, so the next "
-                + "start boots (about 7 minutes to the lock screen the first time). Your newest save stays as a way back; "
-                + "going back to it takes the app away again. Apps made for developers work; apps from the App Store "
-                + "only if they are decrypted.", 15, 0xffbbbbbb);
-        String why = Ipa26.refusal(this);
-        if (why != null) {
-            text(why, 15, 0xffffb340);
-        }
-        for (File f : Ipa26.waiting(this)) {
-            button(String.format(java.util.Locale.ROOT, "Install %s (%.0f MB)", f.getName(), f.length() / 1e6), v -> {
-                try {
-                    askIpa(new FileInputStream(f), f.length(), f.getName(), f);
-                } catch (IOException e) {
-                    status.setText(e.getMessage());
-                }
-            }).setEnabled(why == null);
-        }
-        button("Choose an .ipa\u2026", v -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-            startActivityForResult(i, PICK_IPA);
-        }).setEnabled(why == null);
-    }
-
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req == PICK_IPA && res == RESULT_OK && data != null && data.getData() != null) {
-            Uri u = data.getData();
-            long size = -1;
-            String name = "the .ipa";
-            try (Cursor c = getContentResolver().query(u, new String[] {OpenableColumns.SIZE, OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-                if (c != null && c.moveToFirst()) {
-                    if (!c.isNull(0)) {
-                        size = c.getLong(0);
-                    }
-                    if (!c.isNull(1)) {
-                        name = c.getString(1);
-                    }
-                }
-            }
-            try {
-                askIpa(getContentResolver().openInputStream(u), size, name, null);
-            } catch (IOException e) {
-                status.setText(e.getMessage());
-            }
-            return;
-        }
         if (req != PICK || res != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
@@ -408,71 +357,6 @@ public class SetupActivity extends Activity {
             String r = result;
             runOnUiThread(() -> finishRun(r));
         }, "setup-import").start();
-    }
-
-    /** Refuses in plain words, else asks once what an .ipa install does, then installs in the background. */
-    private void askIpa(InputStream in, long total, String name, File done) {
-        String why = busy ? "Wait until the running install is done." : Ipa26.refusal(this);
-        if (why != null) {
-            status.setText(why);
-            try {
-                in.close();
-            } catch (IOException ignored) {
-                // nothing read
-            }
-            return;
-        }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("Install " + name + "?")
-                .setMessage("The app goes onto iOS 26's disk. iOS 26 then boots at the next start: the first time takes about "
-                        + "7 minutes to the lock screen. Your newest save stays as a way back, but going back to it removes "
-                        + "the app again.")
-                .setPositiveButton("Install", (d, w) -> installIpa(in, total, name, done))
-                .setNegativeButton("Cancel", (d, w) -> {
-                    try {
-                        in.close();
-                    } catch (IOException ignored) {
-                        // nothing read
-                    }
-                })
-                .show();
-    }
-
-    private void installIpa(InputStream in, long total, String name, File done) {
-        busy = true;
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        for (int i = 0; i < box.getChildCount(); i++) {
-            if (box.getChildAt(i) instanceof Button) {
-                box.getChildAt(i).setEnabled(false);
-            }
-        }
-        bar.setVisibility(View.VISIBLE);
-        bar.setIndeterminate(true);
-        status.setText("Starting\u2026 keep this screen open.");
-        AppExit.begin(this, AppExit.IMPORT, "an .ipa install into iOS 26 was running");
-        new Thread(() -> {
-            String result;
-            try (InputStream s = in) {
-                Ipa26.Result r = Ipa26.install(this, new java.io.BufferedInputStream(s, 1 << 20), total, name, (what, pct) -> runOnUiThread(() -> {
-                    bar.setIndeterminate(pct < 0);
-                    if (pct >= 0) {
-                        bar.setProgress(pct * 10);
-                    }
-                    status.setText(what + "\u2026");
-                }), () -> false);
-                if (done != null) {
-                    done.delete();
-                }
-                result = Ipa26.summary(r);
-            } catch (IOException | RuntimeException e) {
-                result = "Not installed: " + e.getMessage();
-                AppLog.note(this, "ipa install stopped: " + e);
-            } finally {
-                AppExit.end(this, AppExit.IMPORT);
-            }
-            String r = result;
-            runOnUiThread(() -> finishRun(r));
-        }, "setup-ipa").start();
     }
 
     private void finishRun(String result) {
