@@ -227,7 +227,9 @@ final class Setup26Screen {
         }
         PhoneSetup26.setWants(a, i26, w);
         error.setText("");
-        Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.startA26(a));
+        // (the helper VM takes memory too: say so when little is free, K5)
+        LowMemory.askBeforeStart(a, "the setup", Helper.needBytes(Helper.ramMiB(a, Helper.FLOOR_WORK_IN_RAM)),
+                () -> Battery.askOnce(a, "The setup takes over an hour", true, () -> SetupService.startA26(a)));
     }
 
     private void runCheck() {
