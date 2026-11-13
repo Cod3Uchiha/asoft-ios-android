@@ -52,8 +52,10 @@ final class Ipa26 {
         /** "AngryBirds2.app (was com.rovio.baba 25.0)" when the job replaced an app that was there already, else "". */
         String replaced = "";
         int noget;                                  // files that had get-task-allow switched off
-        /** "PATH (SHA-1 only)": files that had no usable signature and were signed ad hoc (setup/phone/adhoc.py). */
+        /** "PATH (reason)": every Mach-O signed ad hoc (setup/phone/adhoc.py signs all of them; the names go to the log). */
         final List<String> signed = new ArrayList<>();
+        /** "PATH N": libraries whose N entitlements were left out of their new signature. */
+        final List<String> entsDropped = new ArrayList<>();
         final List<String> warnings = new ArrayList<>();
         long seconds;
     }
@@ -232,6 +234,7 @@ final class Ipa26 {
                     int ram = Helper.retryRam(r, Helper.FLOOR_WORK_IN_RAM);
                     AppLog.note(c, "ipa26: the helper VM failed (" + r.failure() + ", " + r.how() + "); again under TCG with " + ram + " MiB");
                     res.signed.clear();
+                    res.entsDropped.clear();
                     res.warnings.clear();
                     r = Helper.run(c, "run", disks, cpus, jd, l, cancelled, false, ram);
                 }
@@ -264,7 +267,7 @@ final class Ipa26 {
             res.seconds = (System.currentTimeMillis() - t0) / 1000;
             AppLog.note(c, "ipa26: " + (name == null ? "?" : name) + " -> " + res.app + " (" + res.bundleId + ") on " + disk.getName()
                     + (res.replaced.isEmpty() ? res.isNew ? ", new" : ", replaced" : ", replaced " + res.replaced + (res.isNew ? ", other id" : "")) + ", get-task-allow off in " + res.noget + " file(s), signed ad hoc: "
-                    + res.signed + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
+                    + res.signed + (res.entsDropped.isEmpty() ? "" : ", library entitlements left out: " + res.entsDropped) + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
             Installer.deleteTree(jd);
             return res;
         } finally {
@@ -292,6 +295,8 @@ final class Ipa26 {
             } catch (NumberFormatException ignored) {
                 // not a number: none counted
             }
+        } else if (t.startsWith("ipa-ents-dropped ")) {
+            res.entsDropped.add(t.substring(17));
         } else if (t.startsWith("ipa-signed ")) {
             // "PATH REASON" (REASON: unsigned, SHA-1_only, its_code_pages_do_not_match_its_signature)
             String[] a = t.substring(11).split(" ", 2);
@@ -356,11 +361,14 @@ final class Ipa26 {
             s.append("\nThis app was signed for development: that was switched off so iOS 26 lets it run.");
         }
         if (!r.signed.isEmpty()) {
-            // (what had no signature iOS 26 accepts was signed again here, so it is no reason for the app not to start)
+            // (one line: an app has dozens of frameworks; the names are in the log)
             s.append("\n").append(r.signed.size()).append(r.signed.size() == 1 ? " file" : " files")
-                    .append(" of this app had no usable signature and was signed again on this phone: ")
-                    .append(String.join(", ", r.signed.subList(0, Math.min(3, r.signed.size()))))
-                    .append(r.signed.size() > 3 ? ", ..." : "").append(".");
+                    .append(" of this app ").append(r.signed.size() == 1 ? "was" : "were").append(" signed again on this phone so that iOS 26 accepts ")
+                    .append(r.signed.size() == 1 ? "it" : "them").append(".");
+            if (!r.entsDropped.isEmpty()) {
+                s.append(" The entitlements of ").append(r.entsDropped.size()).append(r.entsDropped.size() == 1 ? " library were" : " libraries were")
+                        .append(" left out: an app only uses its main file's.");
+            }
         }
         s.append("\nGo back to an older save would take the app away again.");
         return s.toString();

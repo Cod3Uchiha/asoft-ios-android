@@ -1,11 +1,12 @@
 """ipa-hashes.py SCRIPTS APP OUT: the CDHashes of every Mach-O of an app for the trust cache, after making each usable.
 
 SCRIPTS is the folder with cdhash.py (the PC installer's), APP the staged .app, OUT the list (one 40-digit hash a
-line, the form mktc.py reads). A 64-bit slice without a SHA-256 code directory that matches its pages (unsigned,
-SHA-1 only, a decrypted binary's changed pages) is re-signed ad hoc first (adhoc.py, next to this file); each such file
-is named: "ASOFT: ipa-signed PATH REASON". A file adhoc.py cannot help makes the job fail ("ASOFT: ipa-fail PATH: why",
-exit 4), and so does a slice that still has no hash afterwards (exit 3): an app with one such file does not start, so
-none is installed. The count line is "ASOFT: ipa-hashes N MACHOS".
+line, the form mktc.py reads). Every 64-bit slice is first signed ad hoc with one SHA-256 code directory of our own (adhoc.py, next to this file; a
+foreign signature is never trusted, even one that looks usable); each file is named: "ASOFT: ipa-signed PATH REASON" and,
+when a library's entitlements were left out, "ASOFT: ipa-ents-dropped PATH N". A file adhoc.py cannot sign makes the job
+fail ("ASOFT: ipa-fail PATH: why", exit 4), and so does a slice that does not end with exactly one SHA-256 directory
+whose CDHash is in the list (exit 3): an app with one such file does not start, so none is installed. The count line is
+"ASOFT: ipa-hashes N MACHOS".
 """
 import os
 import struct
@@ -28,8 +29,10 @@ machos = 0
 for p in adhoc.machos(app):
     rel = os.path.relpath(p, app)
     try:
-        for why, got in adhoc.resign(p, app):
+        for why, got, dropped in adhoc.resign(p, app):
             print('ASOFT: ipa-signed %s %s' % (rel, why.replace(' ', '_')))
+            if dropped:
+                print('ASOFT: ipa-ents-dropped %s %d' % (rel, dropped))
     except (adhoc.Unsupported, struct.error, OSError) as e:
         fail(rel, 'cannot be given a signature iOS 26 accepts: %s' % e, 4)
     with open(p, 'rb') as f:
@@ -47,8 +50,9 @@ for p in adhoc.machos(app):
     for sl in slices:
         got = [h for h, _flags in cdhash.cdhashes(sl)]
         ok, why = adhoc.usable(sl)
-        if not got or not ok:
-            fail(rel, 'still has no usable code signature (%s)' % (why or 'no hash'), 3)
+        cds = adhoc.directories(sl, adhoc.blobs(sl, adhoc.Info(sl)))
+        if not ok or len(got) != 1 or len(cds) != 1:
+            fail(rel, 'does not end with exactly one usable code directory (%s, %d hashes)' % (why or 'ok', len(got)), 3)
         hashes.update(got)
 with open(out, 'w') as f:
     f.write('\n'.join(sorted(hashes)) + ('\n' if hashes else ''))

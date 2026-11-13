@@ -33,15 +33,20 @@ public class Ipa26Test {
     }
 
     @Test
-    public void signedFilesAreListedNotWarnedAbout() {
+    public void signedFilesAreCountedInOneLine() {
         Ipa26.Result r = new Ipa26.Result();
         String[] fail = {null};
-        Ipa26.line26("ipa-signed Frameworks/libX.dylib SHA-1_only", r, fail);
-        Ipa26.line26("ipa-signed Frameworks/U.framework/U its_code_pages_do_not_match_its_signature", r, fail);
+        for (int i = 0; i < 26; i++) {
+            Ipa26.line26("ipa-signed Frameworks/F" + i + ".framework/F" + i + " its_code_pages_do_not_match_its_signature", r, fail);
+        }
+        Ipa26.line26("ipa-ents-dropped Frameworks/iGameGod.framework/iGameGod 40", r, fail);
         r.app = "A.app";
         String text = Ipa26.summary(r);
-        assertTrue(text.contains("2 files of this app had no usable signature and was signed again on this phone: "
-                + "Frameworks/libX.dylib (SHA-1 only), Frameworks/U.framework/U (its code pages do not match its signature)."));
+        assertEquals(26, r.signed.size());
+        assertEquals("Frameworks/F0.framework/F0 (its code pages do not match its signature)", r.signed.get(0));
+        assertTrue(text.contains("\n26 files of this app were signed again on this phone so that iOS 26 accepts them. "
+                + "The entitlements of 1 library were left out"));
+        assertTrue(!text.contains("Frameworks/F0"));
         assertTrue(!text.contains("will refuse"));
     }
 

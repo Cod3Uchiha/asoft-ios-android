@@ -1,21 +1,25 @@
 """adhoc.py: give every Mach-O of an app a code signature the iOS 26 trust cache can carry.
 
-    adhoc.py APP                  check every Mach-O under the folder; re-sign the unusable ones in place
-    adhoc.py --check APP          only say which are unusable (exit 1 when there are some)
+    adhoc.py APP                  sign every Mach-O under the folder ad hoc, in place
+    adhoc.py --check APP          only say which have no usable signature as they are (exit 1 when there are some)
     adhoc.py --file FILE [APP]    the same for one file (APP: the folder its Info.plist / CodeResources belong to)
 
-A 64-bit slice is "usable" when it has a SHA-256 code directory whose page hashes all match the file as it is. The
-trust cache route (ipa-hashes.py -> mktc.py) carries the CDHash of such a directory, and the guest's kernel checks a
-page against the directory when it is mapped. Three things make a slice unusable, and each is repaired the same way:
-  unsigned                     no LC_CODE_SIGNATURE
-  SHA-1 only                   (Angry Birds 2015-era builds, some third-party frameworks) no SHA-256 directory
-  code pages that do not match a decrypted App Store binary: the encrypted pages were replaced after signing
-Repair = one ad-hoc signature, like `codesign -s -`: a SHA-256 code directory (version 0x20400, flags adhoc, 4 KB pages,
-page hashes over the file as it is, execSegBase/Limit/Flags from __TEXT), the old requirements are dropped (an empty
-set, as codesign makes for ad hoc), the old entitlements are kept byte for byte (XML slot 5 and DER slot 7; a DER one is
-made from the XML when only that was there), special slot 1 and 3 (Info.plist, CodeResources) are hashed again from the
-files beside the binary when it is its bundle's executable, and an empty CMS blob closes it. The old identifier stays.
-Prints "signed REL REASON CDHASH [CDHASH ...]" per changed file (CDHash = first 20 bytes of the directory's SHA-256).
+Policy: EVERY 64-bit slice of the app gets our own ad-hoc signature (like `codesign -f -s -`), whatever signature it
+had. The trust cache then carries exactly one CDHash per slice, ours, and a foreign signature that merely looks fine
+(a dual SHA-1/SHA-256 one, a vendor's flags and execSeg bits, a signature that sits beside a CMS blob) is never relied on.
+`usable()` only tells why a slice needed it, for the log: "unsigned", "SHA-1 only", "its code pages do not match its
+signature" (a FairPlay-decrypted App Store binary: the signature's page hashes cover the encrypted pages, cryptid and
+the pages of the encrypted range changed afterwards; a version 0x20500 directory keeps the hashes of the plain pages
+apart, at preEncryptOffset), or "a signature from elsewhere" (a SHA-256 directory that matches).
+The signature is one SHA-256 code directory (version 0x20400, flags adhoc, 4 KB pages, page hashes over the file as it is,
+execSegBase/Limit/Flags from __TEXT), an empty requirement set (the old ones are dropped), the old entitlements as
+they were (XML slot 5 and DER slot 7; a DER one is made from the XML when only that was there), special slots 1 and 3
+(Info.plist, CodeResources) hashed again from the files beside the binary when it is its bundle's executable, and an empty CMS
+blob. The old identifier stays. Exception: a library (not MH_EXECUTE) is signed WITHOUT entitlements, because a process
+gets its entitlements from its main executable only, so a library's are never used, and AMFI refuses a library whose
+signature claims restricted ones (platform-application, com.apple.private.*, task_for_pid-allow ...): the one file of
+Angry Birds 2 that dyld rejected (iGameGod) was the only one of its 35 Mach-Os that carried them. `--keep-library-entitlements` turns that off.
+Prints "signed REL REASON CDHASH [CDHASH ...]" per file (CDHash = first 20 bytes of the directory's SHA-256).
 
 Fat files are handled per slice: every 64-bit slice (arm64 and arm64e alike) is checked and, when needed, re-signed in
 its place, and the fat header is rewritten (slices keep their alignment; 32-bit slices are copied untouched).
@@ -173,7 +177,8 @@ def directories(m, bl):
 
 
 def usable(m, info=None):
-    """(usable, why not): is there a SHA-256 code directory whose pages all match this slice?"""
+    """(usable, why not): is there a SHA-256 code directory whose pages all match this slice? Not a reason to keep a
+    signature (resign signs every slice anyway), only the reason that is logged."""
     info = info or Info(m)
     bl = blobs(m, info)
     if not bl:
@@ -250,8 +255,9 @@ class Context:
                 pass
 
 
-def sign_slice(m, ctx):
-    """The slice @m (a bytes-like 64-bit Mach-O) with a new ad-hoc signature: (new bytearray, CDHash hex)."""
+def sign_slice(m, ctx, keep_library_entitlements=False):
+    """The slice @m (a bytes-like 64-bit Mach-O) with a new ad-hoc signature: (new bytearray, CDHash hex, number of
+    entitlements left out). A library's entitlements are left out unless @keep_library_entitlements (see the module text)."""
     info = Info(m)
     if info.cryptid:
         raise Unsupported('it is still encrypted (cryptid %d): decrypt it first' % info.cryptid)
@@ -290,6 +296,13 @@ def sign_slice(m, ctx):
             raise Unsupported('the padding after its load commands is not empty')
         struct.pack_into('<IIII', b, sig_cmd, LC_CODE_SIGNATURE, 16, sig_off, 0)
         struct.pack_into('<II', b, 16, info.ncmds + 1, info.sizeofcmds + 16)
+    dropped = 0
+    if info.filetype != MH_EXECUTE and not keep_library_entitlements and (ents_xml is not None or ents_der is not None):
+        try:
+            dropped = len(plistlib.loads(ents_xml[8:])) if ents_xml is not None else 1
+        except Exception:
+            dropped = 1
+        ents_xml = ents_der = None
     if ents_xml is not None and ents_der is None:
         try:
             ents = plistlib.loads(ents_xml[8:])
@@ -347,12 +360,12 @@ def sign_slice(m, ctx):
     struct.pack_into('>I', sb, 4, len(sb))
     sb += bytes(new_size - len(sb))
     b += sb
-    return b, hashlib.sha256(bytes(cd)).hexdigest()[:40]
+    return b, hashlib.sha256(bytes(cd)).hexdigest()[:40], dropped
 
 
-def resign(path, app=None):
-    """Re-sign what is unusable in the Mach-O @path in place. Returns [] when nothing was needed, else
-    [(reason, [CDHash, ...])] (one entry per file). Raises Unsupported."""
+def resign(path, app=None, keep_library_entitlements=False):
+    """Signs every 64-bit slice of the Mach-O @path ad hoc, in place. Returns [] when it is no Mach-O or has no 64-bit
+    slice, else [(why it needed it, [CDHash, ...], entitlements left out)] (one entry per file). Raises Unsupported."""
     with open(path, 'rb') as f:
         buf = f.read()
     try:
@@ -363,24 +376,21 @@ def resign(path, app=None):
     if arches is None:
         if not is_64(buf, 0):
             return []
-        ok, why = usable(buf)
-        if ok:
-            return []
-        new, h = sign_slice(buf, ctx)
+        why = usable(buf)[1] or 'a signature from elsewhere'
+        new, h, dropped = sign_slice(buf, ctx, keep_library_entitlements)
         write(path, new)
-        return [(why, [h])]
-    parts, changed, hashes, reasons = [], False, [], []
+        return [(why, [h], dropped)]
+    parts, hashes, reasons, dropped = [], [], [], 0
     for cpu, sub, off, size, al in arches:
         sl = buf[off:off + size]
         if is_64(sl, 0):
-            ok, why = usable(sl)
-            if not ok:
-                new, h = sign_slice(sl, ctx)
-                sl, changed = bytes(new), True
-                hashes.append(h)
-                reasons.append(why)
+            reasons.append(usable(sl)[1] or 'a signature from elsewhere')
+            new, h, d = sign_slice(sl, ctx, keep_library_entitlements)
+            sl = bytes(new)
+            hashes.append(h)
+            dropped += d
         parts.append((cpu, sub, sl, al))
-    if not changed:
+    if not hashes:
         return []
     # the fat header again: slices keep their alignment, the file is laid out in the old order
     big = any(len(sl) >= 1 << 32 for _, _, sl, _ in parts) or len(buf) >= 1 << 32
@@ -398,7 +408,7 @@ def resign(path, app=None):
             struct.pack_into('>iiIII', out, 8 + 20 * i, cpu, sub, pos, len(sl), al)
         pos += len(sl)
     write(path, out)
-    return [(', '.join(sorted(set(reasons))), hashes)]
+    return [(', '.join(sorted(set(reasons))), hashes, dropped)]
 
 
 def write(path, data):
@@ -460,8 +470,9 @@ def main(argv):
                         print('unusable %s: %s' % (rel, why))
                         bad += 1
             else:
-                for why, hashes in resign(p, app):
-                    print('signed %s %s %s' % (rel, why.replace(' ', '_'), ' '.join(hashes)))
+                for why, hashes, dropped in resign(p, app, '--keep-library-entitlements' in argv):
+                    print('signed %s %s %s%s' % (rel, why.replace(' ', '_'), ' '.join(hashes),
+                                                 ' (%d entitlements of a library left out)' % dropped if dropped else ''))
         except (Unsupported, struct.error, OSError) as e:
             print('FAILED %s: %s' % (rel, e))
             bad += 1

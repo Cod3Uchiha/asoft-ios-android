@@ -186,11 +186,11 @@ m = read(p)
 has, ok, h = slice_state(m)
 check('unsigned: signed, SHA-256 directory, every page matches', has and ok and r and r[0][1] == [h] and r[0][0] == 'unsigned')
 check('unsigned: the pages after the header are the original ones', m[0x1000:0x4000] == orig[0x1000:0x4000])
-check('unsigned: a second run changes nothing', adhoc.resign(p, tmp) == [] and read(p) == m)
+check('unsigned: signing again gives the same file (deterministic)', adhoc.resign(p, tmp) and read(p) == m)
 
 # -- SHA-1 only, with entitlements (XML only: the DER one is made) and an identifier to keep
 ents = plistlib.dumps({'com.apple.security.app-sandbox': False, 'keychain-access-groups': ['a.b'], 'n': 3}, fmt=plistlib.FMT_XML)
-p = put('a/sha1.dylib', signed(1, ents=ents))
+p = put('a/sha1.dylib', signed(1, ents=ents, filetype=2))        # an executable keeps its entitlements
 old = read(p)
 r = adhoc.resign(p, tmp)
 m = read(p)
@@ -206,9 +206,21 @@ cdhash_cmd = subprocess.run([PY, '-I', os.path.join(HERE, '..', '..', '..', 'app
 if cdhash_cmd is not None:
     check('SHA-1 only: cdhash.py (the trust cache route) reads the same CDHash', cdhash_cmd.split()[0] == h)
 
+# -- a library's entitlements are left out (a process gets its own from the main executable; AMFI refuses restricted ones)
+rest = plistlib.dumps({'platform-application': True, 'com.apple.private.security.no-container': True}, fmt=plistlib.FMT_XML)
+p = put('a/lib-with-ents.dylib', signed(2, ents=rest))
+r = adhoc.resign(p, tmp)
+m = read(p)
+has, ok, h = slice_state(m)
+check('library: signed, its 2 restricted entitlements left out, no slot 5 or 7', has and ok and r[0][2] == 2
+      and blob_at(m, 5) is None and blob_at(m, 7) is None)
+p = put('a/lib-keep.dylib', signed(2, ents=rest))
+adhoc.resign(p, tmp, keep_library_entitlements=True)
+check('library: --keep-library-entitlements keeps them', blob_at(read(p), 5) is not None and blob_at(read(p), 7) is not None)
+
 # -- bad pages: a SHA-256 signature whose code pages no longer match (a decrypted binary)
 good = bytearray(signed(2))
-check('bad pages: a matching SHA-256 file is usable and left alone', adhoc.usable(bytes(good))[0])
+check('a matching SHA-256 file reads as usable', adhoc.usable(bytes(good))[0])
 good[0x2100] ^= 0xff
 p = put('a/badpages.dylib', bytes(good))
 check('bad pages: seen as unusable', adhoc.usable(bytes(good)) == (False, 'its code pages do not match its signature'))
@@ -218,7 +230,17 @@ has, ok, h = slice_state(m)
 check('bad pages: re-signed over the file as it is', r and has and ok and m[0x2100] == good[0x2100])
 p = put('a/usable.dylib', signed(2))
 before = read(p)
-check('usable file: untouched', adhoc.resign(p, tmp) == [] and read(p) == before)
+r = adhoc.resign(p, tmp)
+m = read(p)
+check('usable foreign signature: signed again all the same (one SHA-256 directory of ours)',
+      r and r[0][0] == 'a signature from elsewhere' and slice_state(m)[:2] == (True, True) and m != before
+      and len(adhoc.directories(m, adhoc.blobs(m, adhoc.Info(m)))) == 1)
+# two directories (SHA-1 primary, SHA-256 alternate, as iGameGod has): one of ours afterwards
+dual = bytearray(signed(2))
+p = put('a/dual.dylib', bytes(dual))
+adhoc.resign(p, tmp)
+m = read(p)
+check('dual-directory file ends with exactly one directory', len(adhoc.directories(m, adhoc.blobs(m, adhoc.Info(m)))) == 1)
 
 # -- a bundle's executable: special slots 1 and 3 and the identifier come from its files
 b = 'bundle/Fw.framework/'
@@ -256,9 +278,8 @@ m = read(p)
 arches = adhoc.fat_arches(m)
 check('fat: three slices stay, header rewritten and aligned', len(arches) == 3 and all(o % (1 << al) == 0 for _, _, o, _, al in arches))
 check('fat: the 32-bit slice is byte for byte the same', m[arches[0][2]:arches[0][2] + arches[0][3]] == bytes(a32))
-check('fat: the unsigned arm64 slice is signed, the usable arm64e one untouched',
-      slice_state(m[arches[1][2]:arches[1][2] + arches[1][3]])[:2] == (True, True)
-      and m[arches[2][2]:arches[2][2] + arches[2][3]] == s64e and r and len(r[0][1]) == 1)
+check('fat: both 64-bit slices are signed (arm64 and arm64e), one hash each',
+      all(slice_state(m[arches[k][2]:arches[k][2] + arches[k][3]])[:2] == (True, True) for k in (1, 2)) and r and len(r[0][1]) == 2)
 
 # -- what it must refuse, naming the reason
 expect_unsupported('encrypted slice refused', lambda: adhoc.sign_slice(macho(cryptid=1), adhoc.Context('x', tmp)), 'encrypted')
@@ -270,7 +291,7 @@ expect_unsupported('LINKEDIT not at the end refused (unsigned)',
 expect_unsupported('application-specific slots refused',
                    lambda: adhoc.sign_slice(signed(2, specials4=True), adhoc.Context('x', tmp)), 'application-specific')
 weird = plistlib.dumps({'x': b'data-value'}, fmt=plistlib.FMT_XML)
-expect_unsupported('entitlement value of an unsupported type refused', lambda: adhoc.sign_slice(signed(1, ents=weird), adhoc.Context('x', tmp)), 'DER')
+expect_unsupported('entitlement value of an unsupported type refused', lambda: adhoc.sign_slice(signed(1, ents=weird, filetype=2), adhoc.Context('x', tmp)), 'DER')
 
 # -- ipa-hashes.py on a made-up app: signs what it can, fails naming a file it cannot
 app = os.path.join(tmp, 'App.app')
@@ -287,9 +308,9 @@ if not os.path.exists(os.path.join(scripts, 'cdhash.py')):
 if os.path.exists(os.path.join(scripts, 'cdhash.py')):
     r = subprocess.run([PY, '-I', os.path.join(HERE, '..', 'ipa-hashes.py'), scripts, app, os.path.join(tmp, 'h.txt')], capture_output=True, text=True)
     hs = [x for x in read(os.path.join(tmp, 'h.txt')).decode().split() if x]
-    check('ipa-hashes: signs the two unusable, three machos, three hashes', r.returncode == 0 and 'ipa-hashes 3 3' in r.stdout
+    check('ipa-hashes: signs all three machos, three hashes', r.returncode == 0 and 'ipa-hashes 3 3' in r.stdout
           and 'ipa-signed Frameworks/Lib.dylib unsigned' in r.stdout and 'ipa-signed Frameworks/Old.dylib SHA-1_only' in r.stdout
-          and len(hs) == 3)
+          and 'ipa-signed Main a_signature_from_elsewhere' in r.stdout and len(hs) == 3)
     check('ipa-hashes: every listed hash is the CDHash of a SHA-256 directory that matches its file',
           sorted(hs) == sorted(slice_state(read(os.path.join(app, n)))[2] for n in ('Main', 'Frameworks/Lib.dylib', 'Frameworks/Old.dylib')))
     put('App2.app/Main', signed(2))
@@ -302,8 +323,13 @@ if os.path.exists(os.path.join(scripts, 'cdhash.py')):
 # -- the real files of Angry Birds 2, when asked for
 ab2 = os.environ.get('ASOFT_AB2')
 if ab2:
-    for rel in ('Frameworks/libAngryBirds2.dylib', 'Frameworks/UnityFramework.framework/UnityFramework'):
+    for rel in ('Frameworks/libAngryBirds2.dylib', 'Frameworks/UnityFramework.framework/UnityFramework', 'AngryBirds2',
+                'Frameworks/iGameGod.framework/iGameGod', 'Frameworks/iGameGod.framework/libswift_Concurrency.dylib',
+                'Frameworks/FBAEMKit.framework/FBAEMKit', 'Frameworks/Sentry.framework/Sentry'):
         src = os.path.join(ab2, rel)
+        if not os.path.isfile(src):
+            print('skip (not extracted): ' + rel)
+            continue
         dst = os.path.join(tmp, 'ab2', rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy(src, dst)
@@ -314,17 +340,50 @@ if ab2:
                 shutil.copy(e, os.path.join(os.path.dirname(dst), extra))
         before = read(dst)
         why = adhoc.usable(before)
+        ents_before = blob_at(before, 5)
         r = adhoc.resign(dst, os.path.join(tmp, 'ab2'))
         after = read(dst)
         has, ok, h = slice_state(after)
-        check('Angry Birds 2 %s: was %s; now SHA-256 directory, all %d pages match, CDHash %s' % (rel, why[1], len(after) // 4096, h),
-              not why[0] and r and has and ok and r[0][1] == [h])
-        # everything before the signature is the original's but the header
-        sig_old = adhoc.Info(before).sig_off
+        cds = adhoc.directories(after, adhoc.blobs(after, adhoc.Info(after)))
+        check('Angry Birds 2 %s: was %s; now ONE SHA-256 directory, all %d pages match, CDHash %s' % (rel, why[1] or 'usable-looking', len(after) // 4096, h),
+              r and has and ok and r[0][1] == [h] and len(cds) == 1 and cds[0][1] == 2)
+        if adhoc.Info(after).filetype == 2:
+            check('   the executable keeps its entitlements byte for byte', blob_at(after, 5) == ents_before)
+        elif ents_before:
+            check('   the library\'s %d entitlements are left out' % r[0][2], blob_at(after, 5) is None and blob_at(after, 7) is None and r[0][2] > 0)
         hdr_end = 32 + adhoc.Info(before).sizeofcmds
+        sig_old = adhoc.Info(before).sig_off
         diff = [k for k in range(sig_old) if before[k] != after[k]]
         check('   before the old signature only the load commands differ (%d bytes: the signature size, __LINKEDIT sizes)' % len(diff),
               all(k < hdr_end for k in diff) and len(diff) < 32)
+
+    # why 24 files read "its code pages do not match its signature": FairPlay-decrypted App Store binaries. The directory is
+    # version 0x20500 with its page hashes over the ENCRYPTED pages; the hashes of the plain pages are kept apart at
+    # preEncryptOffset, and those match the file as it is. The bad pages are page 0 (cryptid zeroed) and the encrypted range.
+    for rel in ('Frameworks/FBAEMKit.framework/FBAEMKit', 'Frameworks/Sentry.framework/Sentry'):
+        src = os.path.join(ab2, rel)
+        if not os.path.isfile(src):
+            continue
+        m = read(src)
+        info = adhoc.Info(m)
+        bl = adhoc.blobs(m, info)
+        at = bl[0][0]
+        v = struct.unpack_from('>IIIIIIIBBBB', m, at + 8)
+        ver, hoff, ncode, limit = v[0], v[2], v[5], v[6]
+        pre = struct.unpack_from('>I', m, at + 92)[0]
+        o, enc = 32, None
+        for _ in range(info.ncmds):
+            c, sz = struct.unpack_from('<II', m, o)
+            if c == 0x2c:
+                enc = struct.unpack_from('<III', m, o + 8)
+            o += sz
+        cryptoff, cryptsize, cryptid = enc
+        badp = [k for k in range(ncode) if hashlib.sha1(m[k * 4096:min((k + 1) * 4096, limit)]).digest() != m[at + hoff + 20 * k:at + hoff + 20 * (k + 1)]]
+        prebad = [k for k in range(ncode) if hashlib.sha1(m[k * 4096:min((k + 1) * 4096, limit)]).digest() != m[at + pre + 20 * k:at + pre + 20 * (k + 1)]]
+        inside = set(range(cryptoff // 4096, (cryptoff + cryptsize) // 4096))
+        check('%s: CD %s, cryptid %d; %d bad pages are page 0 and pages of the old encrypted range; the pre-encrypt hashes match the file (%d mismatches)'
+              % (rel, hex(ver), cryptid, len(badp), len(prebad)),
+              ver == 0x20500 and cryptid == 0 and set(badp) <= inside | {0, 1} and not prebad and len(badp) > 0)
 
 shutil.rmtree(tmp, ignore_errors=True)
 print('failures:', bad)
