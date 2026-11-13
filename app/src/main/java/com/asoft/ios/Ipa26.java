@@ -25,7 +25,9 @@ import java.util.zip.ZipFile;
  * jobs/ios26-ipa.sh). A developer-signed app (get-task-allow, which AMFI refuses while Developer Mode is off)
  * has that entitlement switched off first (noget.py, the PC's too), and every Mach-O slice without a SHA-256 code
  * directory that matches its pages (unsigned, SHA-1 only, a decrypted binary's changed pages) is signed again ad hoc
- * (setup/phone/adhoc.py); a file that cannot be signed fails the install. The new app is made beside the old one and
+ * (setup/phone/adhoc.py); a file that cannot be signed fails the install. Every main executable (the app's, its app extensions)
+ * also gets com.apple.private.set-exception-port, which the iOS 26 kernel demands of a task that sets exception ports
+ * (Sentry and other crash reporters: without it the app is killed with EXC_GUARD six seconds after the launch). The new app is made beside the old one and
  * takes its place only when everything is ready, so a failure leaves the disk as it was. Done by hand once on 2026-11-12 (Super Mario
  * 64), what this does.
  *
@@ -56,6 +58,8 @@ final class Ipa26 {
         final List<String> signed = new ArrayList<>();
         /** "PATH N": libraries whose N entitlements were left out of their new signature. */
         final List<String> entsDropped = new ArrayList<>();
+        /** "PATH KEY": the entitlement ipa-hashes.py gave a main executable (the app's own, app extensions); for the log. */
+        final List<String> entsAdded = new ArrayList<>();
         final List<String> warnings = new ArrayList<>();
         long seconds;
     }
@@ -199,7 +203,8 @@ final class Ipa26 {
             files.put("phone/ipa-place.py", asset(c, "setup/phone/ipa-place.py"));
             files.put("phone/ipa-hashes.py", asset(c, "setup/phone/ipa-hashes.py"));
             files.put("phone/adhoc.py", asset(c, "setup/phone/adhoc.py"));
-            // debug builds: ios26.txt lines "ipa-ent=KEY" add KEY = true to the app's main executable (a test of the exception-port rule)
+            // ipa-hashes.py gives every main executable com.apple.private.set-exception-port; debug builds: ios26.txt lines
+            // "ipa-ent=KEY" add more, "ipa-ent-default=off" leaves that one out (a test of the exception-port rule)
             String ents = Guest.ipaEntitlements(c);
             if (!ents.isEmpty()) {
                 files.put("ipa.ents", ents);
@@ -272,12 +277,27 @@ final class Ipa26 {
             res.seconds = (System.currentTimeMillis() - t0) / 1000;
             AppLog.note(c, "ipa26: " + (name == null ? "?" : name) + " -> " + res.app + " (" + res.bundleId + ") on " + disk.getName()
                     + (res.replaced.isEmpty() ? res.isNew ? ", new" : ", replaced" : ", replaced " + res.replaced + (res.isNew ? ", other id" : "")) + ", get-task-allow off in " + res.noget + " file(s), signed ad hoc: "
-                    + res.signed + (res.entsDropped.isEmpty() ? "" : ", library entitlements left out: " + res.entsDropped) + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
+                    + res.signed + (res.entsDropped.isEmpty() ? "" : ", library entitlements left out: " + res.entsDropped)
+                    + (res.entsAdded.isEmpty() ? "" : ", entitlement added (file key): " + res.entsAdded) + ", " + res.seconds + " s" + (r.nat ? " (native)" : " (TCG)"));
             Installer.deleteTree(jd);
             return res;
         } finally {
             busy = false;
         }
+    }
+
+    /** The job's ipa.ents file from ios26.txt lines (see Guest.ipaEntitlements). */
+    static String entLines(List<String> lines) {
+        StringBuilder b = new StringBuilder();
+        for (String l : lines) {
+            l = l.trim();
+            if (l.equals("ipa-ent-default=off")) {
+                b.append("-default").append((char) 10);
+            } else if (l.startsWith("ipa-ent=") && l.length() > 8) {
+                b.append(l.substring(8)).append((char) 10);
+            }
+        }
+        return b.toString();
     }
 
     static void line26(String text, Result res, String[] fail) {
@@ -300,6 +320,8 @@ final class Ipa26 {
             } catch (NumberFormatException ignored) {
                 // not a number: none counted
             }
+        } else if (t.startsWith("ipa-ent ")) {
+            res.entsAdded.add(t.substring(8));      // "PATH KEY"
         } else if (t.startsWith("ipa-ents-dropped ")) {
             res.entsDropped.add(t.substring(17));
         } else if (t.startsWith("ipa-signed ")) {

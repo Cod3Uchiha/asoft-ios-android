@@ -1942,23 +1942,20 @@ final class Guest {
         return lastOverrides26;
     }
 
-    /** Debug builds: the "ipa-ent=KEY" lines of ios26.txt, one KEY a line (Ipa26 gives them to the job); "" in release builds. */
+    /**
+     * What the job's ipa.ents file holds (ipa-hashes.py: every main executable gets com.apple.private.set-exception-port
+     * by default, in all builds; this file only adds to it or switches it off). Debug builds: the "ipa-ent=KEY" lines of
+     * ios26.txt, one KEY a line, and "ipa-ent-default=off" (the line "-default"); "" in release builds or with neither.
+     */
     static String ipaEntitlements(Context c) {
-        StringBuilder b = new StringBuilder();
         if ((c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
             return "";
         }
         try {
-            for (String l : java.nio.file.Files.readAllLines(new File(c.getExternalFilesDir(null), "ios26.txt").toPath())) {
-                l = l.trim();
-                if (l.startsWith("ipa-ent=") && l.length() > 8) {
-                    b.append(l.substring(8)).append((char) 10);
-                }
-            }
+            return Ipa26.entLines(java.nio.file.Files.readAllLines(new File(c.getExternalFilesDir(null), "ios26.txt").toPath()));
         } catch (IOException ignored) {
-            // no test file
+            return "";      // no test file
         }
-        return b.toString();
     }
 
     private static Map<String, String> overrides26(Context c, List<String> args) {

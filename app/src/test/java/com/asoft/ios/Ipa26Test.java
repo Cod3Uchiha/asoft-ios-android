@@ -57,4 +57,22 @@ public class Ipa26Test {
         Ipa26.line26("ipa-fail Frameworks/libX.dylib: cannot be given a signature iOS 26 accepts: it is still encrypted", r, fail);
         assertTrue(fail[0].startsWith("Frameworks/libX.dylib: cannot be given"));
     }
+
+    @Test
+    public void addedEntitlementIsLogged() {
+        Ipa26.Result r = new Ipa26.Result();
+        String[] fail = {null};
+        Ipa26.line26("ipa-ent Game com.apple.private.set-exception-port", r, fail);
+        Ipa26.line26("ipa-ent PlugIns/Share.appex/Share com.apple.private.set-exception-port", r, fail);
+        assertEquals(2, r.entsAdded.size());
+        assertEquals("Game com.apple.private.set-exception-port", r.entsAdded.get(0));
+        assertTrue(fail[0] == null);
+    }
+
+    @Test
+    public void ipaEntLinesOfTheTestFile() {
+        java.util.List<String> l = java.util.Arrays.asList("something=1", " ipa-ent=com.example.x ", "ipa-ent=", "ipa-ent-default=off");
+        assertEquals("com.example.x\n-default\n", Ipa26.entLines(l));
+        assertEquals("", Ipa26.entLines(java.util.Arrays.asList("other")));
+    }
 }
