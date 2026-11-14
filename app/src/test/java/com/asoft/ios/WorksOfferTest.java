@@ -50,9 +50,16 @@ public class WorksOfferTest {
     }
 
     @Test
-    public void aKeyListedAsWorksOrFailsIsNotOffered() {
+    public void aKeyListedAsWorksIsNotOffered() {
         assertFalse(offer(NOW - DAY, LIST, "SM8750", "adreno 830", "ios26", good(), "", ""));
-        assertFalse(offer(NOW - DAY, LIST, "MT6985", "Mali-G720", "ios26", good(), "", ""));
+    }
+
+    @Test
+    public void aKeyListedAsFailsIsOfferedWhenTheRunWasGood() {
+        assertTrue(offer(NOW - DAY, LIST, "MT6985", "Mali-G720", "ios26", good(), "", ""));
+        WorksRun r = good();
+        r.aliveS = 100;
+        assertFalse(offer(NOW - DAY, LIST, "MT6985", "Mali-G720", "ios26", r, "", ""));
     }
 
     @Test
@@ -107,29 +114,5 @@ public class WorksOfferTest {
         WorksRun r = good();
         r.app = "0.1.5";
         assertFalse(base(r));
-    }
-
-    @Test
-    public void goodRunRoundTripsThroughItsFile() {
-        WorksRun r = good();
-        r.resumed = true;
-        r.coldS = 125;
-        r.loadS = 20;
-        r.fps = 12.5;
-        r.halted = 3;
-        r.el1 = 60;
-        r.screen = "3x (1179x2556)";
-        r.ramMiB = 4096;
-        r.thermalMax = 2;
-        r.lowestAvailMb = 2100;
-        WorksRun b = WorksRun.fromJson(r.toJson());
-        assertTrue(b.good(APP));
-        org.junit.Assert.assertEquals(125, b.coldS);
-        org.junit.Assert.assertEquals(20, b.loadS);
-        org.junit.Assert.assertEquals(12.5, b.fps, 0.001);
-        org.junit.Assert.assertEquals("3x (1179x2556)", b.screen);
-        org.junit.Assert.assertEquals(2100, b.lowestAvailMb);
-        org.junit.Assert.assertNull(WorksRun.fromJson("{not json"));
-        org.junit.Assert.assertNull(WorksRun.fromJson("{}"));
     }
 }

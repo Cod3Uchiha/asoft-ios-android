@@ -15,7 +15,7 @@
       "os": ["ios26", "watch"],
       "state": "fails",
       "phone": "",
-      "note": "the GPU check fails: no VK_EXT_external_memory_host on ARM Mali; not supported yet"
+      "note": "most fail the GPU check (no VK_EXT_external_memory_host); one that passes runs, slowly so far"
     },
     {
       "soc": "",
@@ -23,7 +23,7 @@
       "os": ["ios26", "watch"],
       "state": "fails",
       "phone": "",
-      "note": "the GPU check fails: Imagination PowerVR GPUs are not supported; not supported yet"
+      "note": "the GPU check fails (no VK_EXT_external_memory_host); not supported yet"
     },
     {
       "soc": "",
@@ -31,7 +31,7 @@
       "os": ["ios26", "watch"],
       "state": "fails",
       "phone": "",
-      "note": "the GPU check fails: Samsung Xclipse GPUs are not supported; not supported yet"
+      "note": "the GPU check fails or the picture is wrong; not supported yet"
     }
   ]
 }

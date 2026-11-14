@@ -5,7 +5,8 @@ import java.util.List;
 /**
  * Whether home offers the "works" report for a guest. Pure (WorksOfferTest). All of these, else it stays silent:
  * a list fetched within the last week (no list, no offer: so it is silent offline and until devices.json exists);
- * no row of that list for this phone and guest (works or fails: a phone on the list is known already); a good run
+ * no "works" row of that list for this phone and guest (a "fails" row does not count: a phone that runs anyway
+ * corrects it, so its report is wanted); a good run
  * of the guest on this app version (WorksRun.good); the user has not said "Not now" for this guest and app version
  * and has not opened the report for it.
  */
@@ -34,7 +35,8 @@ final class WorksOffer {
         if (soc.isEmpty() || !TestedPhones.IOS16.equals(guest) && gpu.isEmpty()) {
             return false;
         }
-        if (TestedPhones.lookup(list, soc, gpu, guest) != TestedPhones.Verdict.NONE) {
+        // only a "works" row silences it: a phone of a family listed as failing that demonstrably runs is the report we want most
+        if (TestedPhones.lookup(list, soc, gpu, guest) == TestedPhones.Verdict.WORKS) {
             return false;
         }
         if (run == null || !run.good(app)) {

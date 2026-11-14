@@ -82,11 +82,13 @@ final class WorksReport {
             if (TestedPhones.parse(json) == null) {
                 listFile(c).delete();
                 prefs(c).edit().remove("listAt").apply();
+                changed();
                 AppLog.note(c, "tested phones: the list is not a list, none kept");
                 return;
             }
             Files.write(listFile(c).toPath(), json.getBytes(StandardCharsets.UTF_8));
             prefs(c).edit().putLong("listAt", now).apply();
+            changed();
             AppLog.note(c, "tested phones: list fetched (" + TestedPhones.parse(json).size() + " rows)");
         } catch (IOException | RuntimeException e) {
             AppLog.note(c, "tested phones: list not fetched: " + e);
@@ -156,6 +158,10 @@ final class WorksReport {
         r.thermalMax = thermalMax;
         r.lowestAvailMb = lowestAvailMb;
         write(c, guest, r);
+        // the later writes only refresh figures; the offer changes when a good run appears
+        if (old == null || !old.good(app)) {
+            changed();
+        }
     }
 
     private static void write(Context c, String guest, WorksRun r) {
@@ -177,6 +183,7 @@ final class WorksReport {
         if (r != null && !r.crashed) {
             r.crashed = true;
             write(c, guest, r);
+            changed();
         }
     }
 
@@ -196,25 +203,75 @@ final class WorksReport {
         return (offered & (os == Guest.IOS26 ? 1 : os == Guest.IOS16 ? 2 : 4)) != 0;
     }
 
-    private static boolean decide(Context c, int os) {
-        String guest = guestKey(os), app = version(c);
-        SharedPreferences p = prefs(c);
-        String gpu = TestedPhones.IOS16.equals(guest) ? "" : GpuCheck.last(c).gpu;
-        return WorksOffer.offer(System.currentTimeMillis(), p.getLong("listAt", 0), list(c), soc(), gpu, guest, run(c, guest), app,
-                p.getString("dismissed." + guest, ""), p.getString("opened." + guest, ""));
+    /** The offers are worked out at most this often, and at once after changed(). */
+    private static final long WORK_OUT_EVERY_MS = 60_000L;
+    private static final Object WORK = new Object();
+    /** Something that decides the offers changed (the list, a run file, "Not now", "Open on GitHub"). */
+    private static volatile boolean dirty = true;
+    private static long workedAt;           // SystemClock.elapsedRealtime() of the last working out, 0 = never; under WORK
+
+    /** Something that decides the offers changed: the next refresh works them out again. */
+    private static void changed() {
+        dirty = true;
     }
 
-    /** Works the three offers out (file reads: off the UI thread), then runs @then on the screen's thread. */
+    /**
+     * The three offers: the list is parsed once, the run files read once, and the GPU check's log (GpuCheck.last
+     * rebuilds its whole report) read once, and only when iOS 26 or the watch could be offered at all: a list is
+     * there and one of their runs is good.
+     */
+    private static int workOut(Context c) {
+        String app = version(c);
+        SharedPreferences p = prefs(c);
+        long listAt = p.getLong("listAt", 0), now = System.currentTimeMillis();
+        List<TestedPhones.Entry> list = list(c);
+        if (list == null) {
+            return 0;
+        }
+        String soc = soc();
+        int[] oses = {Guest.IOS26, Guest.IOS16, Guest.WATCH};
+        WorksRun[] runs = new WorksRun[3];
+        boolean gpuNeeded = false;
+        for (int i = 0; i < 3; i++) {
+            runs[i] = run(c, guestKey(oses[i]));
+            gpuNeeded |= oses[i] != Guest.IOS16 && runs[i] != null && runs[i].good(app);
+        }
+        String gpu = gpuNeeded ? GpuCheck.last(c).gpu : "";
+        int m = 0;
+        for (int i = 0; i < 3; i++) {
+            String guest = guestKey(oses[i]);
+            if (WorksOffer.offer(now, listAt, list, soc, oses[i] == Guest.IOS16 ? "" : gpu, guest, runs[i], app,
+                    p.getString("dismissed." + guest, ""), p.getString("opened." + guest, ""))) {
+                m |= oses[i] == Guest.IOS26 ? 1 : oses[i] == Guest.IOS16 ? 2 : 4;
+            }
+        }
+        return m;
+    }
+
+    /**
+     * Runs @then on the screen's thread with the offers up to date: worked out (file reads, off the UI thread) at
+     * most once a minute and at once after changed(); in between @then runs at once with the kept result.
+     */
     static void refresh(Activity a, Runnable then) {
         Context c = a.getApplicationContext();
-        Thread t = new Thread(() -> {
-            int m = 0;
-            try {
-                m = (decide(c, Guest.IOS26) ? 1 : 0) | (decide(c, Guest.IOS16) ? 2 : 0) | (decide(c, Guest.WATCH) ? 4 : 0);
-            } catch (RuntimeException e) {
-                AppLog.note(c, "tested phones: offer not worked out: " + e);
+        synchronized (WORK) {
+            if (!dirty && workedAt != 0 && android.os.SystemClock.elapsedRealtime() - workedAt < WORK_OUT_EVERY_MS) {
+                then.run();
+                return;
             }
-            offered = m;
+        }
+        Thread t = new Thread(() -> {
+            synchronized (WORK) {
+                // cleared before reading, so a change while this works makes the next refresh work again
+                dirty = false;
+                try {
+                    offered = workOut(c);
+                } catch (RuntimeException e) {
+                    offered = 0;
+                    AppLog.note(c, "tested phones: offer not worked out: " + e);
+                }
+                workedAt = android.os.SystemClock.elapsedRealtime();
+            }
             a.runOnUiThread(() -> {
                 if (!a.isDestroyed()) {
                     then.run();
@@ -228,6 +285,7 @@ final class WorksReport {
     private static void mark(Context c, String key, int os) {
         prefs(c).edit().putString(key + guestKey(os), version(c)).apply();
         offered &= ~(os == Guest.IOS26 ? 1 : os == Guest.IOS16 ? 2 : 4);
+        changed();
     }
 
     /** The dialog of the home line for @os: what the issue would say, "Open on GitHub" or "Not now"; @then redraws the home screen. */

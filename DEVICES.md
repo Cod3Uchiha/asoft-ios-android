@@ -5,14 +5,15 @@ same list in words.
 
 | Phone | SoC | GPU | iOS 26 | iOS 16 | watchOS | Note |
 | --- | --- | --- | --- | --- | --- | --- |
-| Samsung SM-S938B (Galaxy S25 Ultra) | SM8750 | Adreno 830 | works | works | works | |
-| any phone with an ARM Mali GPU | any | Mali | fails | not tested | fails | The GPU check fails: no VK_EXT_external_memory_host. Not supported yet. |
-| any phone with an Imagination PowerVR GPU | any | PowerVR | fails | not tested | fails | The GPU check fails. Not supported yet. |
-| any phone with a Samsung Xclipse GPU | any | Xclipse | fails | not tested | fails | The GPU check fails. Not supported yet. |
+| Samsung SM-S938B (Galaxy S25 Ultra) | SM8750 | Adreno 830 | works | works | works | Galaxy S25 Ultra |
+| any phone with an ARM Mali GPU | any | Mali | fails | no GPU needed | fails | Most fail the GPU check (no VK_EXT_external_memory_host); one that passes runs, slowly so far. |
+| any phone with an Imagination PowerVR GPU | any | PowerVR | fails | no GPU needed | fails | The GPU check fails (no VK_EXT_external_memory_host); not supported yet. |
+| any phone with a Samsung Xclipse GPU | any | Xclipse | fails | no GPU needed | fails | The GPU check fails or the picture is wrong; not supported yet. |
 
 A row with a SoC is about that chip. A row without one is a GPU family and covers every phone whose GPU name contains it.
 iOS 16 does not use the GPU, so it is matched on the SoC alone.
 
 How a phone gets onto the list: after a guest has run on a phone for at least ten minutes and the phone's chip is not on
-the list, the app offers a "works" report, a prefilled GitHub issue that you read and submit yourself. The issue is added
-here and then closed.
+the list as working, the app offers a "works" report, a prefilled GitHub issue that you read and submit yourself. The
+issue is added here and then closed. A phone of a family listed as failing that does run still gets the offer, and its
+report corrects the row.
