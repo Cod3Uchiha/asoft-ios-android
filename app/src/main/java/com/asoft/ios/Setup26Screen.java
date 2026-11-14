@@ -275,10 +275,14 @@ final class Setup26Screen {
         t.append(r.never
                 ? "\n\nThere is no mode without the GPU, so they cannot be installed here. You can still send us the check's log: "
                         + "it helps us know which phones people have."
-                : "\n\nThere is no mode without the GPU, so they cannot be installed yet. Please send us the check's log: it says "
-                        + "what this GPU's driver lacks and helps us add it.");
+                : "\n\n" + CrashText.GPU_KNOWN + " The check's log below says what this GPU's driver lacks, if you want to send it.");
         gpu.setText(t.toString());
         gpu.setTextColor(ORANGE);
+        if (!r.never) {
+            String family = CrashText.gpuFamily(CrashText.gpuName(r.report));
+            gpuLink(family.isEmpty() ? "See the GPU issues" : "See the " + family + " issues",
+                    v -> CrashReport.openGpuIssues(a, family));
+        }
         gpuLink("Copy log", v -> {
             ClipboardManager cm = a.getSystemService(ClipboardManager.class);
             cm.setPrimaryClip(ClipData.newPlainText("ASoftware GPU check", r.report));

@@ -341,14 +341,43 @@ public class LogsActivity extends Activity {
         facts.put("App", CrashReport.appVersion(this));
         facts.put("Phone", CrashReport.phone());
         List<String> lines = new ArrayList<>(Arrays.asList(s.text.split("\n")));
-        List<CrashText.Block> blocks = new ArrayList<>();
         if (s.gpu != null) {
-            blocks.add(new CrashText.Block("The GPU check's report", lines, 1));
-            CrashReport.openIssue(this, "GPU check: " + s.gpu.summary, s.gpu.summary,
-                    s.gpu.why.isEmpty() ? s.gpu.summary : String.join("; ", s.gpu.why), facts, blocks);
-        } else {
-            blocks.add(new CrashText.Block("The app's log, its last lines", lines, 1));
-            CrashReport.openIssue(this, "App log", "The app's log, from Logs", "(see the log)", facts, blocks);
+            if (!s.gpu.pass && !s.gpu.never) {
+                // "not supported yet" is a known limit of the GPU's driver: its issue first, a new report only on purpose
+                String family = CrashText.gpuFamily(CrashText.gpuName(s.gpu.report));
+                new AlertDialog.Builder(this)
+                        .setTitle("This GPU is not supported yet")
+                        .setMessage(CrashText.GPU_KNOWN)
+                        .setPositiveButton(family.isEmpty() ? "See the GPU issues" : "See the " + family + " issues",
+                                (d, w) -> CrashReport.openGpuIssues(this, family))
+                        .setNeutralButton("Report anyway", (d, w) -> reportGpu(s, facts, lines))
+                        .setNegativeButton("Cancel", null)
+                        .show();
+                return;
+            }
+            reportGpu(s, facts, lines);
+            return;
         }
+        String line = CrashText.telling(lines);
+        if (line == null) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Nothing to report")
+                    .setMessage("This log holds only routine lines: no error, no stop. If something went wrong anyway, "
+                            + "describe it in words.")
+                    .setPositiveButton("Describe it", (d, w) -> CrashReport.openInWords(this, facts))
+                    .setNegativeButton("Close", null)
+                    .show();
+            return;
+        }
+        List<CrashText.Block> blocks = new ArrayList<>();
+        blocks.add(new CrashText.Block("The app's log, its last lines", lines, 1));
+        CrashReport.openIssue(this, CrashText.logTitle(line), "The app's log, from Logs", line, facts, blocks);
+    }
+
+    private void reportGpu(Shown s, LinkedHashMap<String, String> facts, List<String> lines) {
+        List<CrashText.Block> blocks = new ArrayList<>();
+        blocks.add(new CrashText.Block("The GPU check's report", lines, 1));
+        CrashReport.openIssue(this, "GPU check: " + s.gpu.summary, s.gpu.summary,
+                s.gpu.why.isEmpty() ? s.gpu.summary : String.join("; ", s.gpu.why), facts, blocks);
     }
 }

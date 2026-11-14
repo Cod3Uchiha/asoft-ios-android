@@ -651,6 +651,113 @@ final class CrashText {
         return cut(cause, 100);
     }
 
+    // -- a report made from a log that is no record (Logs: the app's log, the GPU check)
+
+    /** The "MM-dd HH:mm:ss " AppLog.note puts before every line. */
+    private static final Pattern STAMP = Pattern.compile("^\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d ");
+
+    /** Words that make an app-log line a stop, a hold or an error (the lines the app writes when something ends or waits). */
+    private static final String[] TELLING = {"stopped", "crash", "app exit", "failed", "held", "paused", "error", "fatal",
+            "not enough room", "out of memory", "killed", "not written"};
+
+    /** Lines that look like these words but are not a problem of the user's: the update check, the GPU check (it has its own log). */
+    private static boolean routine(String l) {
+        return l.startsWith("update check") || l.startsWith("gpu check:") || l.contains("slow server");
+    }
+
+    /**
+     * The most telling line of the app's @log: the last stop, hold or error line (without its time stamp), null when the
+     * log holds only routine lines (update check, start-up, progress).
+     */
+    static String telling(List<String> log) {
+        for (int i = log.size() - 1; i >= 0; i--) {
+            String l = STAMP.matcher(log.get(i)).replaceFirst("").trim();
+            if (l.isEmpty() || routine(l)) {
+                continue;
+            }
+            String low = l.toLowerCase(java.util.Locale.ROOT);
+            for (String w : TELLING) {
+                if (low.contains(w)) {
+                    return l;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The issue title of a log whose most telling line is @line: that line, cut like a cause. */
+    static String logTitle(String line) {
+        String t = shortCause(line);
+        return t.isEmpty() ? t : Character.toUpperCase(t.charAt(0)) + t.substring(1);
+    }
+
+    /**
+     * What a report is called to know that it was opened already: the day, the kind of record and its cause text. The
+     * same problem twice in one day is one report; the next day is a new one.
+     */
+    static String reportKey(String day, String kind, String cause) {
+        return day + "|" + kind + "|" + (cause == null ? "" : cause.trim());
+    }
+
+    /** @opened plus @key, without the keys of other days (they would only grow the list). */
+    static java.util.Set<String> rememberReport(java.util.Set<String> opened, String day, String key) {
+        java.util.Set<String> out = new HashSet<>();
+        for (String k : opened) {
+            if (k.startsWith(day + "|")) {
+                out.add(k);
+            }
+        }
+        out.add(key);
+        return out;
+    }
+
+    /** The GPU's name in a GPU check's report ("gpu: Mali-G720 MC7"), "" when it has none. */
+    static String gpuName(String report) {
+        if (report != null) {
+            for (String l : report.split("\n")) {
+                if (l.startsWith("gpu: ") && !l.substring(5).trim().isEmpty()) {
+                    return l.substring(5).trim();
+                }
+            }
+        }
+        return "";
+    }
+
+    /**
+     * The GPU family to search the issues for: Mali, PowerVR, Xclipse, "Adreno 740" (its model number kept: they
+     * differ), else the name's first word; "" without a name.
+     */
+    static String gpuFamily(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return "";
+        }
+        String n = name.trim(), low = n.toLowerCase(java.util.Locale.ROOT);
+        if (low.contains("mali")) {
+            return "Mali";
+        }
+        if (low.contains("powervr")) {
+            return "PowerVR";
+        }
+        if (low.contains("xclipse")) {
+            return "Xclipse";
+        }
+        if (low.contains("adreno")) {
+            Matcher m = Pattern.compile("(\\d{3,4})").matcher(n);
+            return m.find() ? "Adreno " + m.group(1) : "Adreno";
+        }
+        return n.split("[\\s(-]")[0];
+    }
+
+    /** GitHub's search of @repo's issues (open and closed) for @family; all the issues when it is empty. */
+    static String gpuIssuesUrl(String repo, String family) {
+        return "https://github.com/" + repo + "/issues?q=" + enc("is:issue " + (family.isEmpty() ? "GPU" : family));
+    }
+
+    /** What the screens say of a GPU that is "not supported yet" (GpuCheck.Result.never is false). */
+    static final String GPU_KNOWN = "This is a known limit of this GPU's driver, not a fault of your phone. iOS 16 does not need "
+            + "the GPU, so it works here. iOS 26 and watchOS cannot be installed yet. Each GPU family has an issue on GitHub: "
+            + "read it, or add your phone there. A new report is only needed if you find none for your GPU.";
+
     private static String cut(String s, int max) {
         return s.length() > max ? s.substring(0, max - 1).trim() + "…" : s;
     }
@@ -782,7 +889,7 @@ final class CrashText {
     /** As above, with any logs (@blocks) folded away under the facts. */
     static String body(LinkedHashMap<String, String> facts, String what, String cause, List<Block> blocks, boolean shortened) {
         StringBuilder b = new StringBuilder();
-        b.append("**What were you doing when it happened?** (optional)\n\n\n\n");
+        b.append("**What were you doing, and what went wrong?** (one short sentence helps most)\n\n\n\n");
         b.append("**What happened:** ").append(what).append("\n\n");
         b.append("**Cause:**\n```\n").append(fenced(cause == null ? "" : cause)).append("\n```\n\n");
         b.append("| | |\n|---|---|\n");

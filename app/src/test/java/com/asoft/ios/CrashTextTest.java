@@ -636,4 +636,73 @@ public class CrashTextTest {
         j.rc = 0;
         assertFalse(Helper.worthRetry(j, Helper.FLOOR_IOS16));
     }
+
+    // -- reports from a log (title, nothing to report, the same report twice, the GPU family)
+
+    @Test
+    public void logTitleComesFromTheLastStopOrHoldLine() {
+        List<String> log = Arrays.asList(
+                "11-13 17:13:22 setup: payload 0%: The kernel",
+                "11-13 17:14:05 setup stopped: Not enough room: 1.4 GB free, about 26.5 GB needed",
+                "11-13 17:40:00 setup: disk 40%: copying iOS",
+                "11-13 18:19:12 helper build-root: held (the phone is hot)",
+                "11-13 18:20:00 update check: nothing newer than 0.1.5");
+        assertEquals("helper build-root: held (the phone is hot)", CrashText.telling(log));
+        assertEquals("Helper build-root: held (the phone is hot)", CrashText.logTitle(CrashText.telling(log)));
+        // an earlier stop counts when nothing later does
+        assertEquals("setup stopped: Not enough room: 1.4 GB free, about 26.5 GB needed", CrashText.telling(log.subList(0, 3)));
+        assertEquals("Setup stopped: Not enough room: 1.4 GB free, about 26.5 GB needed",
+                CrashText.logTitle(CrashText.telling(log.subList(0, 3))));
+        assertTrue(CrashText.logTitle(CrashText.telling(Arrays.asList("11-13 18:00:00 app crash: " + "x".repeat(300)))).length() <= 100);
+    }
+
+    @Test
+    public void aLogOfRoutineLinesHasNothingToReport() {
+        assertNull(CrashText.telling(Arrays.asList("11-13 16:32:08 update check: nothing newer than 0.1.5")));
+        assertNull(CrashText.telling(Collections.<String>emptyList()));
+        // start-up, progress, slow servers, an update check that failed, the GPU check (it has its own log)
+        assertNull(CrashText.telling(Arrays.asList(
+                "11-13 17:03:41 setup: start (30 GB free)",
+                "11-13 17:04:13 setup: x.dmg: chunk 110 at 2 MB, retry 1: slow server (93 KB/s, the others 372 KB/s)",
+                "11-13 17:13:23 helper: short of memory: 1.4 GB available, the VM takes up to 2.1 GB",
+                "11-13 17:13:24 update check failed: java.net.UnknownHostException",
+                "11-13 16:48:50 gpu check: not supported yet: sparse memory binding (turnip skipped)")));
+    }
+
+    @Test
+    public void theSameReportTwiceInOneDayIsRemembered() {
+        String a = CrashText.reportKey("2026-11-14", "setup", "Not enough room: 1.4 GB free");
+        assertEquals(a, CrashText.reportKey("2026-11-14", "setup", " Not enough room: 1.4 GB free "));
+        java.util.Set<String> opened = CrashText.rememberReport(new java.util.HashSet<String>(), "2026-11-14", a);
+        assertTrue(opened.contains(a));
+        // another cause, another kind, another day: a new report
+        assertFalse(opened.contains(CrashText.reportKey("2026-11-14", "setup", "Not enough room: 2.0 GB free")));
+        assertFalse(opened.contains(CrashText.reportKey("2026-11-14", "guest", "Not enough room: 1.4 GB free")));
+        assertFalse(opened.contains(CrashText.reportKey("2026-11-15", "setup", "Not enough room: 1.4 GB free")));
+        // the next day's list holds the old key no more
+        String b = CrashText.reportKey("2026-11-15", "setup", "x");
+        java.util.Set<String> next = CrashText.rememberReport(opened, "2026-11-15", b);
+        assertEquals(1, next.size());
+        assertTrue(next.contains(b));
+    }
+
+    @Test
+    public void gpuFamilyComesFromTheGpuName() {
+        assertEquals("Mali", CrashText.gpuFamily("Mali-G720 MC7"));
+        assertEquals("Mali", CrashText.gpuFamily("Mali-G57"));
+        assertEquals("PowerVR", CrashText.gpuFamily("PowerVR B-Series BXM-8-256"));
+        assertEquals("Xclipse", CrashText.gpuFamily("Samsung Xclipse 940"));
+        assertEquals("Adreno 618", CrashText.gpuFamily("Adreno (TM) 618"));
+        assertEquals("", CrashText.gpuFamily(""));
+        assertEquals("Foo", CrashText.gpuFamily("Foo 3000"));
+        assertEquals("Mali-G720 MC7", CrashText.gpuName("== the phone's own Vulkan driver\ngpu: Mali-G720 MC7\ndriver: x\n"));
+        assertEquals("", CrashText.gpuName("result: fail\n"));
+        assertEquals("https://github.com/o/r/issues?q=is%3Aissue%20Mali", CrashText.gpuIssuesUrl("o/r", "Mali"));
+    }
+
+    @Test
+    public void theQuestionComesFirstInTheBody() {
+        String b = CrashText.body(new LinkedHashMap<String, String>(), "w", "c", new ArrayList<CrashText.Block>(), false);
+        assertTrue(b.startsWith("**What were you doing, and what went wrong?**"));
+    }
 }
