@@ -337,7 +337,7 @@ final class CrashReport {
         List<String> ev = stderrEvidence(new File(run, "qemu-stderr.txt"));
         List<String> app = appLog(c, r.appLogOffset, -1, 150);
         String fatal = CrashText.fatalLine(ev);
-        String cause = CrashText.cause(fatal, ev, raw);
+        String cause = CrashText.cause(fatal, ev, raw, Build.VERSION.SDK_INT, RunStats.lowestAvailKb(r.pid));
         String status = CrashText.describeStatus(raw);
         boolean crash = CrashText.isCrash(raw, fatal);
         String guest = Guest.osName(r.os) + (r.setup ? " (setup boot)" : "");
@@ -354,6 +354,7 @@ final class CrashReport {
         h.put("app", appVersion(c));
         h.put("engine", engine(c, r.engine));
         h.put("phone", phone());
+        h.put("settings_enable_monitor_phantom_procs", phantomLimit(c));
         h.put("memory", memory(c));
         h.put("thermal", thermal(c));
         h.put("hardware", r.cpus + " vCPUs, " + (r.ramMiB > 0 ? r.ramMiB + " MiB guest RAM" : "the setup's own guest RAM")
@@ -500,6 +501,15 @@ final class CrashReport {
         // the counter frequency: iOS 26 and the helper run on the phone's own counter (A#66)
         return s.append(", Android ").append(Build.VERSION.RELEASE).append(" (SDK ").append(Build.VERSION.SDK_INT).append("), ")
                 .append(CounterFreq.text()).toString();
+    }
+
+    /** The global setting settings_enable_monitor_phantom_procs ("false" = the child process limit is off), or "not readable". */
+    static String phantomLimit(Context c) {
+        try {
+            return CrashText.phantomSetting(android.provider.Settings.Global.getString(c.getContentResolver(), "settings_enable_monitor_phantom_procs"));
+        } catch (RuntimeException e) {
+            return "not readable";
+        }
     }
 
     static String memory(Context c) {

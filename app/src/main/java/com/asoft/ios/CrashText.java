@@ -526,6 +526,39 @@ final class CrashText {
      * else its last error line, else its exit code. @tailLines: evidence()'s lines.
      */
     static String cause(String fatal, List<String> tailLines, int raw) {
+        return cause(fatal, tailLines, raw, 0, -1);
+    }
+
+    /** MemAvailable (kB) the run's lowest sample must have stayed at or above for "memory was not short": 1 GiB. */
+    static final long NOT_SHORT_KB = 1024 * 1024;
+
+    private static final String CHILD_LIMIT = "Android's limit on an app's child processes (Android 12 and later): the"
+            + " Developer options switch \"Disable child process restrictions\" lifts it";
+
+    /**
+     * What follows "QEMU was ended by signal 9 (SIGKILL)". @sdk: the phone's Android SDK; below 31 there is no child
+     * process limit and the text is the memory one alone. @lowestAvailKb: the lowest MemAvailable sampled while the
+     * run lasted (RunStats, every 10 s), -1 when there is none: without a sample memory counts as possibly short.
+     * The child-process cause comes first only when every sample was at or above NOT_SHORT_KB.
+     */
+    static String sigkillText(int sdk, long lowestAvailKb) {
+        String memory = "Android ends an app's processes this way when the phone is short of memory";
+        if (sdk < 31) {
+            return "; " + memory;
+        }
+        if (lowestAvailKb >= NOT_SHORT_KB) {
+            return "; the phone did not look short of memory, so it may be " + CHILD_LIMIT + ". Otherwise " + memory;
+        }
+        return "; " + memory + ". It may also be " + CHILD_LIMIT;
+    }
+
+    /** The value of the child process limit's global setting for the report: "not set" when the phone has none. */
+    static String phantomSetting(String value) {
+        return value == null || value.trim().isEmpty() ? "not set" : value.trim();
+    }
+
+    /** cause() for a phone of @sdk whose run's lowest sampled MemAvailable was @lowestAvailKb (-1: none). */
+    static String cause(String fatal, List<String> tailLines, int raw, int sdk, long lowestAvailKb) {
         if (fatal != null) {
             int at = fatal.indexOf("fatal: ");
             return cap(at >= 0 ? fatal.substring(at + 7) : fatal, 600);
@@ -588,7 +621,7 @@ final class CrashText {
             int sig = signal(raw);
             String s = "QEMU was ended by " + signalText(sig);
             if (sig == 9) {
-                s += "; Android ends an app's processes this way when the phone is short of memory";
+                s += sigkillText(sdk, lowestAvailKb);
             }
             // a failed assert() aborts: the assertion is the cause, the SIGABRT only its way out
             return cap(assertion != null && sig == 6 ? assertion + "; " + s : s, 600);

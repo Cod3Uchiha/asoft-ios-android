@@ -132,6 +132,33 @@ public class CrashTextTest {
     }
 
     @Test
+    public void sigkillTextOrdersTheCausesByMemory() {
+        List<String> none = Collections.<String>emptyList();
+        String mem = "Android ends an app's processes this way when the phone is short of memory";
+        // below Android 12 the text stays as it was, whatever the samples say
+        assertEquals("QEMU was ended by signal 9 (SIGKILL); " + mem, CrashText.cause(null, none, 9, 30, 5_000_000));
+        // no sample, or a low one: memory first, the child process limit second
+        String low = CrashText.cause(null, none, 9, 34, 200_000);
+        assertTrue(low, low.startsWith("QEMU was ended by signal 9 (SIGKILL); " + mem + ". It may also be Android's limit on an app's child processes"));
+        assertTrue(low, low.contains("Disable child process restrictions"));
+        assertEquals(low, CrashText.cause(null, none, 9, 34, -1));
+        assertEquals(low, CrashText.cause(null, none, 9, 31, CrashText.NOT_SHORT_KB - 1));
+        // every sample at or above 1 GiB: the child process limit first
+        String ok = CrashText.cause(null, none, 9, 34, CrashText.NOT_SHORT_KB);
+        assertTrue(ok, ok.startsWith("QEMU was ended by signal 9 (SIGKILL); the phone did not look short of memory, so it may be Android's limit"));
+        assertTrue(ok, ok.endsWith("Otherwise " + mem));
+        // other signals are untouched
+        assertEquals("QEMU was ended by signal 6 (SIGABRT)", CrashText.cause(null, none, 6, 34, 5_000_000));
+    }
+
+    @Test
+    public void phantomSettingWords() {
+        assertEquals("not set", CrashText.phantomSetting(null));
+        assertEquals("not set", CrashText.phantomSetting(" "));
+        assertEquals("false", CrashText.phantomSetting("false"));
+    }
+
+    @Test
     public void causeOfStorageAndAssertions() {
         assertEquals("the phone's storage was full",
                 CrashText.cause(null, Arrays.asList("qcow2: write failed: No space left on device", "x"), 6));

@@ -36,6 +36,21 @@ final class RunStats {
     private static boolean firstFrameLogged;
     private static long lastFrameMs;        // the live view: when the last frame was asked for
     private static long periodFrames, periodViewMs;
+    // MemAvailable (kB) sampled every 10 s of the run of sampledPid; the crash record reads the lowest one
+    private static volatile int sampledPid = -1;
+    private static volatile long lowestKb = -1;
+
+    /** The lowest MemAvailable (kB) sampled during the run of QEMU @p; -1 when none (or another run's). */
+    static long lowestAvailKb(int p) {
+        return p == sampledPid ? lowestKb : -1;
+    }
+
+    private static void sample(int p) {
+        long kb = CrashReport.memInfoKb("MemAvailable");
+        if (kb >= 0 && p == sampledPid) {
+            lowestKb = lowestKb < 0 ? kb : Math.min(lowestKb, kb);
+        }
+    }
 
     /** What a run's EL sampler said last: seconds into the run and the vCPUs' shares, -1 when absent. */
     static final class El {
@@ -113,6 +128,8 @@ final class RunStats {
         Context a = c.getApplicationContext();
         synchronized (LOCK) {
             pid = p;
+            sampledPid = p;
+            lowestKb = -1;
             t0 = t0Ms;
             app = a;
             firstFrameLogged = false;
@@ -123,6 +140,7 @@ final class RunStats {
         AppLog.note(a, "run: " + Guest.osName(os) + " " + (resumed ? "quick-save load" : "cold boot") + ", "
                 + startRam(os, Guest.bootRamMiB(), os == Guest.IOS16 ? 0 : Guest.ramMiB(a, os)) + " MiB, cpuset " + cpus(p) + ", MemAvailable " + availMb() + " MB, thermal "
                 + CrashReport.thermal(a));
+        sample(p);
         Thread t = new Thread(() -> watch(a, p), "run-stats");
         t.setDaemon(true);
         t.start();
@@ -167,6 +185,7 @@ final class RunStats {
             if (!Guest.running() || Guest.pid(c) != p) {
                 return;
             }
+            sample(p);
             long s = (SystemClock.elapsedRealtime() - t0) / 1000;
             if (!due(s, lastS)) {
                 continue;
