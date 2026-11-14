@@ -39,6 +39,16 @@ final class RunStats {
     // MemAvailable (kB) sampled every 10 s of the run of sampledPid; the crash record reads the lowest one
     private static volatile int sampledPid = -1;
     private static volatile long lowestKb = -1;
+    // what the works report keeps of the run (WorksReport.keep): its guest, how it started, the live view's first frame
+    // (seconds after the start, -1 = not yet), the highest thermal status sampled, the newest fps and EL shares seen
+    private static int runOs;
+    private static boolean runResumed;
+    private static int runRamMiB;
+    private static String runScreen = "";
+    private static volatile int firstFrameS = -1;
+    private static volatile int thermalMax = -1;
+    private static double lastFps = -1;
+    private static El newestEl;
 
     /** The lowest MemAvailable (kB) sampled during the run of QEMU @p; -1 when none (or another run's). */
     static long lowestAvailKb(int p) {
@@ -49,6 +59,13 @@ final class RunStats {
         long kb = CrashReport.memInfoKb("MemAvailable");
         if (kb >= 0 && p == sampledPid) {
             lowestKb = lowestKb < 0 ? kb : Math.min(lowestKb, kb);
+        }
+        Context c = app;
+        if (c != null && p == sampledPid) {
+            android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
+            if (pm != null) {
+                thermalMax = Math.max(thermalMax, pm.getCurrentThermalStatus());
+            }
         }
     }
 
@@ -136,9 +153,17 @@ final class RunStats {
             lastFrameMs = 0;
             periodFrames = 0;
             periodViewMs = 0;
+            runOs = os;
+            runResumed = resumed;
+            runRamMiB = startRam(os, Guest.bootRamMiB(), os == Guest.IOS16 ? 0 : Guest.ramMiB(a, os));
+            runScreen = os == Guest.IOS26 ? (Guest.scale26(a) == 2 ? "2x (786x1704)" : "3x (1179x2556)") : "";
+            firstFrameS = -1;
+            thermalMax = -1;
+            lastFps = -1;
+            newestEl = null;
         }
         AppLog.note(a, "run: " + Guest.osName(os) + " " + (resumed ? "quick-save load" : "cold boot") + ", "
-                + startRam(os, Guest.bootRamMiB(), os == Guest.IOS16 ? 0 : Guest.ramMiB(a, os)) + " MiB, cpuset " + cpus(p) + ", MemAvailable " + availMb() + " MB, thermal "
+                + runRamMiB + " MiB, cpuset " + cpus(p) + ", MemAvailable " + availMb() + " MB, thermal "
                 + CrashReport.thermal(a));
         sample(p);
         Thread t = new Thread(() -> watch(a, p), "run-stats");
@@ -165,6 +190,7 @@ final class RunStats {
                     firstFrameLogged = true;
                     log = app;
                     sinceS = (now - t0) / 1000;
+                    firstFrameS = (int) sinceS;
                 }
             }
         }
@@ -202,7 +228,20 @@ final class RunStats {
                 periodFrames = 0;
                 periodViewMs = 0;
             }
-            AppLog.note(c, line(s, lastEl(tail), lastCensus(tail), fps, viewS, availMb(), CrashReport.thermal(c), cpus(p)));
+            El el = lastEl(tail);
+            AppLog.note(c, line(s, el, lastCensus(tail), fps, viewS, availMb(), CrashReport.thermal(c), cpus(p)));
+            // the works report keeps the run once it has shown a first frame and lived 10 minutes; the newest figures win
+            if (fps >= 0) {
+                lastFps = fps;
+            }
+            if (el != null) {
+                newestEl = el;
+            }
+            if (pid == p) {
+                long low = lowestKb;
+                WorksReport.keep(c, runOs, runResumed, firstFrameS, (int) s, lastFps, newestEl, runRamMiB, runScreen, thermalMax,
+                        low < 0 ? -1 : low / 1024);
+            }
         }
     }
 

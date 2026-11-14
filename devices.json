@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "soc": "SM8750",
+      "gpu": "Adreno (TM) 830",
+      "os": ["ios26", "ios16", "watch"],
+      "state": "works",
+      "phone": "Samsung SM-S938B",
+      "note": "Galaxy S25 Ultra"
+    },
+    {
+      "soc": "",
+      "gpu": "Mali",
+      "os": ["ios26", "watch"],
+      "state": "fails",
+      "phone": "",
+      "note": "most fail the GPU check (no VK_EXT_external_memory_host); one that passes runs, slowly so far"
+    },
+    {
+      "soc": "",
+      "gpu": "PowerVR",
+      "os": ["ios26", "watch"],
+      "state": "fails",
+      "phone": "",
+      "note": "the GPU check fails (no VK_EXT_external_memory_host); not supported yet"
+    },
+    {
+      "soc": "",
+      "gpu": "Xclipse",
+      "os": ["ios26", "watch"],
+      "state": "fails",
+      "phone": "",
+      "note": "the GPU check fails or the picture is wrong; not supported yet"
+    }
+  ]
+}

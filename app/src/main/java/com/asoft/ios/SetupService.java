@@ -263,6 +263,8 @@ public class SetupService extends Service {
 
     /** When the step that runs now started: its failed helper runs since then go into its record (SetupRecord). */
     private volatile long stepSince;
+    /** The running run's time per step, for the works report's setup line (WorksReport.setupDone at its end). */
+    private volatile SetupTimes times = new SetupTimes(System.currentTimeMillis());
 
     /** "the iOS 16 setup", "the iOS 26 and watchOS setup": what runs, for the app's own end (AppExit). */
     private String setupName(boolean a26) {
@@ -314,6 +316,7 @@ public class SetupService extends Service {
             // where this run's lines start in the app's log, for a record of its end
             long logAt = new File(Guest.runDir(this), "app.txt").length();
             stepSince = t0;
+            times = new SetupTimes(t0);
             AppExit.begin(this, AppExit.SETUP, setupName(a26) + " was running");
             AppLog.note(this, "setup: start (" + getFilesDir().getUsableSpace() / 1_000_000_000L + " GB free)");
             try {
@@ -378,6 +381,8 @@ public class SetupService extends Service {
                         state.step = "done";
                         state.text = title(true);
                         AppLog.note(this, "setup: done in " + (System.currentTimeMillis() - t0) / 1000 + " s");
+                        times.finish(System.currentTimeMillis());
+                        WorksReport.setupDone(this, a26, times);
                         break;
                     } catch (IOException e) {
                         if (cancel) {
@@ -469,7 +474,9 @@ public class SetupService extends Service {
                         stepSince = System.currentTimeMillis();
                     }
                     stepWas = step;
-                    AppExit.detail(SetupService.this, AppExit.SETUP, SetupRecord.label("a26".equals(state.target), step));
+                    String label = SetupRecord.label("a26".equals(state.target), step);
+                    AppExit.detail(SetupService.this, AppExit.SETUP, label);
+                    times.step(label, System.currentTimeMillis());
                 }
                 if (!step.equals(loggedStep) || (pct >= 0 && pct >= loggedPct + 10)) {
                     loggedStep = step;

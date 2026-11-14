@@ -54,6 +54,8 @@ public class MainActivity extends Activity {
         TextView status, detail, primary, secondary, back, menu;
         /** iOS 26 only: "Install an .ipa…" and the one line of the apps added that way (Ipa26.apps). */
         TextView ipa, apps;
+        /** "Works on this phone? Add it to the list of tested phones." (WorksReport.offered) */
+        TextView works;
         /** "Report this crash", while the system's last end was its own (CrashReport.pendingFor). */
         TextView report;
         /** The picture on the device, and the file's time it was read at. */
@@ -283,6 +285,12 @@ public class MainActivity extends Activity {
         col.addView(c.ipa, new LinearLayout.LayoutParams(-2, -2));
         c.apps = text(col, "", 12.5f, FAINT);
         c.apps.setVisibility(View.GONE);
+        // the works report's one quiet line (WorksReport), shown only while the home screen's offer for this system stands
+        c.works = link("Works on this phone? Add it to the list of tested phones.", LINK, v -> WorksReport.show(this, c.os, this::showWorks));
+        c.works.setTextSize(13.5f);
+        c.works.setPadding(0, dp(10), dp(8), dp(2));
+        c.works.setVisibility(View.GONE);
+        col.addView(c.works, new LinearLayout.LayoutParams(-2, -2));
         return root;
     }
 
@@ -532,6 +540,7 @@ public class MainActivity extends Activity {
     }
 
     private void showUpdate() {
+        showWorks();        // the update check's thread may just have fetched the list of tested phones
         UpdateCheck.Notice n = UpdateCheck.toShow(this);
         updateBar.setVisibility(n == null ? View.GONE : View.VISIBLE);
         if (n != null) {
@@ -1557,11 +1566,21 @@ public class MainActivity extends Activity {
         }, "wadb-test").start();
     }
 
+    /** The works report's line under each system that has an offer (WorksReport.refresh works them out off the UI thread). */
+    private void showWorks() {
+        WorksReport.refresh(this, () -> {
+            for (Panel c : new Panel[] {p26, pWatch, p16}) {
+                c.works.setVisibility(WorksReport.offered(c.os) ? View.VISIBLE : View.GONE);
+            }
+        });
+    }
+
     /** What each system is doing, and the saves (those come from qemu-img or QEMU: off the UI thread). */
     private void refresh() {
         refresh26();
         refreshWatch();
         refresh16();
+        showWorks();
         if (Guest.turningOff()) {
             Panel c = Guest.os(this) == Guest.WATCH ? pWatch : Guest.os(this) == Guest.IOS26 ? p26 : p16;
             state(c, STARTING, "Turning off…");

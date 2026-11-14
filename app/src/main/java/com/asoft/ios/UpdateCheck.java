@@ -88,7 +88,7 @@ final class UpdateCheck {
     }
 
     /** A debug build's test file in files/, or null when there is none (or this is a release build). */
-    private static String testFile(Context c, String name) {
+    static String testFile(Context c, String name) {
         if (!debug(c)) {
             return null;
         }
@@ -174,6 +174,7 @@ final class UpdateCheck {
         // read here, not on the thread: a debug build's stand-in for the newest release's notes
         String testBody = testFile(a, "update-test-notice");
         Thread t = new Thread(() -> {
+            boolean ok = true;
             try {
                 Notice n = fetch(version, testBody);
                 latest = n;
@@ -182,6 +183,11 @@ final class UpdateCheck {
                         + "), this app " + version);
             } catch (Exception e) {
                 AppLog.note(c, "update check failed: " + e);
+                ok = false;
+            }
+            // the project's list of tested phones rides on this check: its schedule, its switch (WorksReport.fetchList: once a day)
+            WorksReport.fetchList(c, version);
+            if (!ok) {
                 return;
             }
             a.runOnUiThread(() -> {
@@ -235,11 +241,16 @@ final class UpdateCheck {
     }
 
     private static String get(String version) throws Exception {
-        HttpURLConnection h = (HttpURLConnection) new URL(API).openConnection();
+        return get(API, "application/vnd.github+json", version, MAX_BODY);
+    }
+
+    /** A GET of @url (GitHub's API or raw.githubusercontent.com), no sign-in; the answer may be @max bytes long. */
+    static String get(String url, String accept, String version, int max) throws java.io.IOException {
+        HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
         try {
             h.setConnectTimeout(15_000);
             h.setReadTimeout(15_000);
-            h.setRequestProperty("Accept", "application/vnd.github+json");
+            h.setRequestProperty("Accept", accept);
             h.setRequestProperty("User-Agent", "ASoftware-Android/" + version);
             if (h.getResponseCode() != 200) {
                 throw new java.io.IOException("HTTP " + h.getResponseCode());
@@ -249,7 +260,7 @@ final class UpdateCheck {
                 byte[] b = new byte[16384];
                 for (int n; (n = in.read(b)) > 0; ) {
                     body.write(b, 0, n);
-                    if (body.size() > MAX_BODY) {
+                    if (body.size() > max) {
                         throw new java.io.IOException("answer too long");
                     }
                 }
