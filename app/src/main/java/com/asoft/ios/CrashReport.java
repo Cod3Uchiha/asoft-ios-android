@@ -75,7 +75,7 @@ final class CrashReport {
      * dropped at ~7,970), so the user would sign in and land on GitHub's home page. Encoded once more a link
      * grows at most 5/3 (%XX becomes %25XX): 4,500 stays under that. What does not fit waits on the clipboard.
      */
-    private static final int MAX_URL = 4500;
+    static final int MAX_URL = 4500;
     /** Records kept, of every kind together, and the size of one (a QEMU's stderr can run to tens of MB). */
     static final int MAX_KEPT = 10, MAX_BYTES = 200_000;
     static final String GUEST = "guest", SETUP = "setup", APP = "app";
@@ -365,6 +365,9 @@ final class CrashReport {
         String id = write(c, GUEST, String.valueOf(r.pid), endedMs, h, s, "last-crash.txt", false);
         if (id == null) {
             return;
+        }
+        if (crash) {
+            WorksReport.crashed(c, r.os);       // the kept good run of this guest no longer counts for a "works" report
         }
         String said = "crash: " + guest + " QEMU " + status + ": " + cause;
         AppLog.note(c, said.length() > 300 ? said.substring(0, 300) : said);
@@ -834,7 +837,7 @@ final class CrashReport {
     }
 
     /** Opens @url (GitHub's new issue page); without a browser the link shows. */
-    private static void open(Activity a, String url) {
+    static void open(Activity a, String url) {
         try {
             a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         } catch (ActivityNotFoundException e) {

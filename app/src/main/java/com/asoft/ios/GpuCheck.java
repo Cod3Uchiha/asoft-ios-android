@@ -115,6 +115,8 @@ final class GpuCheck {
         /** A note that is not a reason by itself (a CPU without what the fast engine needs), or "". */
         String slow = "";
         long ram;                       // the phone's RAM (MemoryInfo.totalMem)
+        /** The GPU's name and the driver's version as the check's log has them ("Adreno (TM) 830"), "" when it did not get that far. */
+        String gpu = "", driver = "";
     }
 
     /*
@@ -535,6 +537,8 @@ final class GpuCheck {
             }
         }
         r.report = rep.toString();
+        r.gpu = gpu;
+        r.driver = driver;
         String name = gpu.isEmpty() ? "" : " (" + gpu + ")";
         r.summary = r.pass ? "Your GPU" + name + " can run iOS 26 and watchOS." + (driver.isEmpty() ? "" : " Driver: " + driver)
                 : r.never ? "iOS 26 and watchOS will not run on this phone" + name + " with its current graphics driver."
