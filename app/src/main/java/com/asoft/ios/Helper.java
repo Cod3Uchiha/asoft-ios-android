@@ -343,7 +343,12 @@ final class Helper {
 
     /** The phone's counter frequency (CNTFRQ_EL0), which the guest gets with x-host-counter. */
     static long hostCounterHz() {
-        return 19_200_000L;     // every Snapdragon since the 8 Gen 1; the S25 Ultra's (2026-11-08)
+        return CounterFreq.hz();    // 19.2 MHz on every Snapdragon since the 8 Gen 1, 1 GHz on a Dimensity 9500 (A#66)
+    }
+
+    /** The helper VM's -cpu: natively it reads the phone's counter and is told its frequency. */
+    static String cpuArg(boolean nat, long hz) {
+        return nat ? "cortex-a76,x-host-counter=on,cntfrq=" + hz : "cortex-a76";
     }
 
     /** The helper's kernels and initramfs in files/helper, copied from the app's assets when they changed. */
@@ -405,7 +410,7 @@ final class Helper {
                 "-M", "virt,gic-version=3,memory-backend=m0", "-object", "memory-backend-memfd,id=m0,size=" + ramMiB + "M,share=on",
                 // cortex-a76, not max: pointer authentication, which max has, is slow under TCG (Build-iOSDisk.ps1).
                 // Natively the guest reads the phone's counter: the same counter and frequency for its kernel.
-                "-cpu", nat ? "cortex-a76,x-host-counter=on,cntfrq=" + hostCounterHz() : "cortex-a76",
+                "-cpu", cpuArg(nat, hostCounterHz()),
                 "-smp", String.valueOf(cpus), "-m", ramMiB + "M",
                 "-accel", "tcg,thread=multi,tb-size=" + tbSizeMiB(ramMiB),
                 "-kernel", (nat ? k[2] : k[0]).getPath(), "-initrd", k[1].getPath(),

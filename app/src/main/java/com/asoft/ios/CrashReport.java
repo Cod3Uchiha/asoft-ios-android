@@ -497,7 +497,9 @@ final class CrashReport {
         if (Build.VERSION.SDK_INT >= 31) {
             s.append(", SoC ").append(Build.SOC_MODEL);
         }
-        return s.append(", Android ").append(Build.VERSION.RELEASE).append(" (SDK ").append(Build.VERSION.SDK_INT).append(')').toString();
+        // the counter frequency: iOS 26 and the helper run on the phone's own counter (A#66)
+        return s.append(", Android ").append(Build.VERSION.RELEASE).append(" (SDK ").append(Build.VERSION.SDK_INT).append("), ")
+                .append(CounterFreq.text()).toString();
     }
 
     static String memory(Context c) {

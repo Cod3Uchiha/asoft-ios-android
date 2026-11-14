@@ -345,7 +345,7 @@ final class PhoneSetup26 {
         return v;
     }
 
-    private static String fill(String t, Map<String, String> v) {
+    static String fill(String t, Map<String, String> v) {
         for (Map.Entry<String, String> e : v.entrySet()) {
             t = t.replace("{" + e.getKey() + "}", e.getValue());
         }
@@ -825,6 +825,7 @@ final class PhoneSetup26 {
                 .file("cloudos/Firmware/" + img + ".aea.trustcache").file("downloads/" + var(m, SHARED, "PLUGIN"));
         j.out.addAll(List.of("rd-shell.hfs", "cloud/rd.trustcache.im4p", "dtree-smp4", "dtree-phone", "dtree-phone-aod", "fw/bootkc",
                 "install/work/gpu"));
+        j.vars.put("TIMEBASE", String.valueOf(CounterFreq.hz()));     // the phone's counter: dt-phone.py --timebase
         Job shared = j;
         // (the shared group's bodies are iOS 26's)
         runJob(c, m, sharedAs(shared), cpus, p, cancelled);
@@ -1437,6 +1438,7 @@ final class PhoneSetup26 {
         j.file("cloud/kernelcache.research.vphone600.decompressed").file("dtree-smp4").file("watchos/ipsw/DeviceTree.n207sap.raw")
                 .file("tools/qemu-sptm").file("gpu-driver/" + bundle);
         j.out.addAll(List.of("watchos/bootkc-w", "watchos/dtree-w", "watchos/dtree-w-3g-19m2", "watchos/gpu"));
+        j.vars.put("TIMEBASE", String.valueOf(CounterFreq.hz()));     // the phone's counter: dt-phone.py --timebase
         runJob(c, m, j, cpus, p, cancelled);
     }
 
