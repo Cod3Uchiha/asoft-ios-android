@@ -14,8 +14,10 @@ import java.util.regex.Pattern;
  * the first no-answer, from what the console and QEMU's stderr say, and 64 KB of the console before and after
  * the first jump of the pids it prints or the first no-answer, kept in the setup's log folder.
  *
- * Not recorded, for want of a cheap source: the tick's own lateness (the loop's sleeps are not planned
- * against a clock) and the guest's real pid counter (the console prints a pid only in some lines).
+ * Also on every line (k18-log): what the shell poll saw of its own command (Poll), how late the loop's sleeps ran
+ * (LoopLate) and the phone's state (screen, doze, power saving, charger, heat), so a silent shell can be told
+ * from a frozen or dozing app. Not recorded, for want of a cheap source: the guest's real pid counter (the console
+ * prints a pid only in some lines).
  */
 final class SetupTick {
     /** A pid this much higher than the last tick's is a jump (a healthy boot ends near 1,300; a churning one passes 65,000). */
@@ -28,6 +30,86 @@ final class SetupTick {
     private static final Pattern BASH = Pattern.compile("launching proc\\[[^\\]]*\\]: /bin/bash");
     private static final Pattern STAMP = Pattern.compile("waited \\d+s for stamp");
     private static final Pattern SAMPLER = Pattern.compile("el-sample t=(\\d+)s");
+
+    /** How far a shell command got, as the console's text shows it (GuestConsole.run). */
+    enum Poll {
+        /** No connection to the console, or nothing sent. */
+        NOT_SENT,
+        /** The command line was sent; its start marker never came back (the shell did not take it). */
+        SENT,
+        /** The start marker came back and the end marker did not (the command began and has not finished). */
+        STARTED,
+        /** Both markers came back. */
+        DONE
+    }
+
+    /** The poll's state in words, with how long the shell has not answered. */
+    static String pollText(Poll p, boolean answered, long silentMin) {
+        if (answered) {
+            return "shell answers";
+        }
+        String what;
+        switch (p == null ? Poll.NOT_SENT : p) {
+            case SENT:
+                what = "command sent, never started";
+                break;
+            case STARTED:
+                what = "command started, no end";
+                break;
+            case DONE:
+                what = "command finished";
+                break;
+            default:
+                what = "no console connection";
+        }
+        return "shell silent " + silentMin + " min (" + what + ")";
+    }
+
+    private static String yn(int v) {
+        return v < 0 ? "?" : v == 0 ? "no" : "yes";
+    }
+
+    /**
+     * The phone's state in words. @lateMs: the worst lateness of the loop's sleeps since the last line; the flags are
+     * 1 yes, 0 no, -1 not known; @thermal: Android's status (-1 not known).
+     */
+    static String hostText(long lateMs, int interactive, int idle, int powerSave, int whitelisted, int charging, int thermal) {
+        return String.format(Locale.ROOT, "loop late max %d s, screen %s, idle %s, power-save %s, battery whitelist %s, charging %s, thermal %s",
+                (Math.max(0, lateMs) + 500) / 1000, interactive < 0 ? "?" : interactive == 0 ? "off" : "on", yn(idle), yn(powerSave),
+                yn(whitelisted), yn(charging), thermal < 0 ? "?" : String.valueOf(thermal));
+    }
+
+    /** The loop's saved stall files to send: the files of the @stalls highest numbers among @names ("wallpaper-serial-stall-3.txt"). */
+    static java.util.List<String> newestStallFiles(String[] names, int stalls) {
+        Pattern p = Pattern.compile("wallpaper-(?:serial|stderr)-stall-(\\d+)\\.txt");
+        java.util.TreeSet<Integer> ns = new java.util.TreeSet<>();
+        for (String n : names) {
+            Matcher m = p.matcher(n);
+            if (m.matches()) {
+                try {
+                    ns.add(Integer.parseInt(m.group(1)));
+                } catch (NumberFormatException ignored) {
+                    // not a number we wrote
+                }
+            }
+        }
+        java.util.List<String> out = new java.util.ArrayList<>();
+        int kept = 0;
+        for (Integer n : ns.descendingSet()) {
+            if (kept++ >= stalls) {
+                break;
+            }
+            for (String kind : new String[] {"serial", "stderr"}) {
+                String f = "wallpaper-" + kind + "-stall-" + n + ".txt";
+                for (String x : names) {
+                    if (x.equals(f)) {
+                        out.add(f);
+                    }
+                }
+            }
+        }
+        return out;
+    }
 
     /** What one tick's new console text holds. */
     static final class Console {
