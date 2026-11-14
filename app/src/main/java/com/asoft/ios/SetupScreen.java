@@ -259,6 +259,8 @@ final class SetupScreen {
             info = "Start it from the home screen: it comes up in about 10 s.";
         } else if (other) {
             info = "iOS 26 or watchOS is being set up: one install at a time.";
+        } else if (running && s.held && s.holdNote != null) {
+            info = s.holdNote;      // a hot or flat phone holds the build: say so (HoldRule)
         } else if (running) {
             info = s.text.isEmpty() ? "" : s.text;
         } else {

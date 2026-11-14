@@ -38,6 +38,7 @@ public class SetupService extends Service {
         volatile String error;                  // why it stopped, in plain words; null while it runs or when done
         volatile String record;                 // the record of that stop (SetupRecord), for the screens' Share log; null without one
         volatile boolean running, paused, waitingForWifi, waitingForNetwork, finished, held;
+        volatile String holdNote;               // while held for heat or battery: why, in plain words (HoldRule.Hold.note)
         volatile String target = "ios16";       // "ios16" (PhoneSetup) or "a26" (PhoneSetup26: iOS 26 and/or watchOS)
         volatile List<IpswFetch.Item> items = new ArrayList<>();
         volatile long received;
@@ -295,9 +296,17 @@ public class SetupService extends Service {
         IpswFetch[] current = new IpswFetch[1];
         boolean a26 = "a26".equals(state.target);
         // a helper VM job is held (SIGSTOP) while paused, too hot or low on battery off the charger, and goes on after
+        // (HoldRule: severe heat holds, moderate never does; the screens and the notification say why)
+        HoldRule rule = new HoldRule(true);
         Helper.hold = () -> {
-            boolean h = pause || PhoneSetup26.shouldHold(this);
-            state.held = h;
+            HoldRule.Hold d = rule.decide(PhoneSetup26.thermal(this), PhoneSetup26.lowBattery(this), android.os.SystemClock.elapsedRealtime());
+            boolean h = pause || d.holding;
+            if (h != state.held) {
+                Helper.holdWhy = pause ? "paused" : d.log();
+                state.holdNote = h && !pause ? d.note() : null;
+                state.held = h;
+                post(h ? (state.holdNote != null ? state.holdNote : "Paused") : state.text + (state.pct >= 0 ? " (" + state.pct + "%)" : ""), state.pct);
+            }
             return h;
         };
         worker = new Thread(() -> {
@@ -406,6 +415,7 @@ public class SetupService extends Service {
                 state.running = false;
                 state.paused = false;
                 state.held = false;
+                state.holdNote = null;
                 Helper.hold = null;
                 Helper.memoryNote = null;
                 AppExit.end(this, AppExit.SETUP);

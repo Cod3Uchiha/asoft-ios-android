@@ -1594,8 +1594,8 @@ final class PhoneSetup26 {
 
     // -- thermal ----------------------------------------------------------------------------------------------
 
-    /** Hot (Android's thermal status SEVERE or worse) until it is back to LIGHT; or the battery low off the charger. */
-    private static volatile boolean hot;
+    /** The boot gate's rule: hold at severe heat or worse (no time limit: a boot cannot be paused) until moderate or cooler (HoldRule). */
+    private static final HoldRule gate = new HoldRule(false);
 
     /** Android's thermal status (0 none … 3 severe … 6 shutdown). */
     static int thermal(Context c) {
@@ -1604,14 +1604,7 @@ final class PhoneSetup26 {
     }
 
     static boolean shouldHold(Context c) {
-        android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
-        int t = pm == null ? 0 : pm.getCurrentThermalStatus();
-        if (t >= android.os.PowerManager.THERMAL_STATUS_SEVERE) {
-            hot = true;
-        } else if (t <= android.os.PowerManager.THERMAL_STATUS_LIGHT) {
-            hot = false;
-        }
-        return hot || lowBattery(c);
+        return gate.decide(thermal(c), lowBattery(c), android.os.SystemClock.elapsedRealtime()).holding;
     }
 
     /** Below 15 % and not charging: the setup waits for the charger (an hour-long build would run it flat). */

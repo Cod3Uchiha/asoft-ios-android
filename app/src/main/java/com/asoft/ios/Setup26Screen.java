@@ -428,8 +428,8 @@ final class Setup26Screen {
         } else if (running && s.waitingForWifi) {
             more = "Waiting for Wi-Fi (Download on Wi-Fi only is on)";
         } else if (running && s.held) {
-            more = PhoneSetup26.lowBattery(a) ? "Waiting for the charger: the battery is low"
-                    : s.paused ? "Paused" : "The phone is hot: the build waits until it cools down, then goes on";
+            more = s.holdNote != null ? s.holdNote
+                    : s.paused ? "Paused" : "Paused: the phone is hot. It goes on by itself when it cools down.";
         } else if (running && s.paused) {
             more = "Paused: what is done stays, Resume goes on from there";
         } else if (running && !PhoneSetup26.charging(a)) {

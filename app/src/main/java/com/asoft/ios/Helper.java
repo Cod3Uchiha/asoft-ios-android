@@ -134,7 +134,14 @@ final class Helper {
      */
     static final int FLOOR_WORK_IN_RAM = 2048, FLOOR_IOS16 = 1536;
     /** The sizes, largest first: a retry after Android's memory killer steps down one (smaller()). */
-    private static final int[] SIZES = {4096, 3072, 2048, 1536};
+    private static final int[] SIZES = {4096, 3072, 2048, 1536, 1024};
+    /**
+     * The least an iOS 16 job gets after Android has closed the app for low memory during one (noteMemoryKill): the
+     * floor above holds when nothing went wrong, and a phone that was killed at it would be killed again at the same
+     * size on every Resume. Not measured: the jobs' own use is ~0.4 GB (initramfs 0.1, apfs-fuse and rsync ~0.2) and
+     * the rest of the guest RAM is page cache, so 1 GiB is slower, not too small.
+     */
+    static final int FLOOR_IOS16_AFTER_KILL = 1024;
 
     /**
      * The helper VM's guest RAM for this phone, at least @floorMiB. Its guest RAM is a memfd the phone has to
@@ -160,7 +167,41 @@ final class Helper {
                 }
             }
         }
-        return sizeFor(phoneRam(c), floorMiB);
+        int mib = sizeFor(phoneRam(c), floorMiB);
+        int kills = memoryKills(c);
+        return kills > 0 ? stepDown(mib, kills, floorMiB == FLOOR_IOS16 ? FLOOR_IOS16_AFTER_KILL : floorMiB) : mib;
+    }
+
+    /** @mib one size smaller per kill, not below @lowestMiB. */
+    static int stepDown(int mib, int kills, int lowestMiB) {
+        for (int i = 0; i < kills; i++) {
+            mib = smaller(mib, lowestMiB);
+        }
+        return Math.max(Math.min(mib, 4096), lowestMiB);
+    }
+
+    private static final String KILLS = "helper-lowmem-kills";
+
+    /**
+     * Android closed the app (LOW_MEMORY) while a helper job ran (AppExit.check at the next start): the next
+     * run steps down one size, per kill. Android takes the app's process, a few MB, while the memory is QEMU's, and the
+     * helper dies with it; the Resume that follows would start the same VM again.
+     */
+    static void noteMemoryKill(Context c) {
+        android.content.SharedPreferences p = c.getSharedPreferences("setup", Context.MODE_PRIVATE);
+        p.edit().putInt(KILLS, Math.min(4, p.getInt(KILLS, 0) + 1)).apply();
+        AppLog.note(c, "helper: Android closed the app for low memory during a helper job: the next run uses less RAM");
+    }
+
+    static int memoryKills(Context c) {
+        return c.getSharedPreferences("setup", Context.MODE_PRIVATE).getInt(KILLS, 0);
+    }
+
+    /** A disk build that finished at its size shows that size fits. */
+    private static void clearMemoryKills(Context c) {
+        if (memoryKills(c) > 0) {
+            c.getSharedPreferences("setup", Context.MODE_PRIVATE).edit().remove(KILLS).apply();
+        }
     }
 
     /** The table above: the size for a phone with @memTotal bytes, at least @floorMiB, at most 4096. */
@@ -268,6 +309,8 @@ final class Helper {
      */
     static volatile BooleanSupplier hold;
     static volatile boolean held;
+    /** Why the hold is on, for the app's log (the setup sets it with hold: HoldRule.Hold.log). */
+    static volatile String holdWhy = "";
 
     /** @pid and its children (the native EL0 engine's stubs), by /proc's parent links. */
     private static List<Integer> family(int pid) {
@@ -450,6 +493,9 @@ final class Helper {
         File pidFile = new File(dir, "pid");
         killLeftover(c, pidFile);
         beforeJob(c, ramMiB);
+        if (memoryKills(c) > 0 && memoryNote == null) {
+            memoryNote = "Android closed the app for low memory earlier, so this run uses less memory and takes longer.";
+        }
         AppLog.note(c, String.format(java.util.Locale.ROOT, "helper run: %s of RAM (phone has %.1f GB, %.1f GB available)",
                 ramMiB % 1024 == 0 ? ramMiB / 1024 + " GB" : String.format(java.util.Locale.ROOT, "%.1f GB", ramMiB / 1024.0),
                 phoneRam(c) / 1e9, available(c) / 1e9));
@@ -474,7 +520,8 @@ final class Helper {
         long at = 0;
         StringBuilder partial = new StringBuilder();
         boolean alive = true;
-        long checkedAt = android.os.SystemClock.elapsedRealtime(), cpuWas = -1, serialWas = 0, memAt = 0;
+        long checkedAt = android.os.SystemClock.elapsedRealtime(), cpuWas = -1, serialWas = 0, memAt = 0, heldAt = 0;
+        long probeAt = checkedAt, probeCpu = -1, t0mono = checkedAt;
         int quiet = 0;
         try {
             while (true) {
@@ -526,7 +573,20 @@ final class Helper {
                 if (want != held) {
                     held = want;
                     signal(pid, want ? 19 : 18);        // SIGSTOP, SIGCONT
-                    AppLog.note(c, "helper " + job + ": " + (want ? "held (the phone is hot)" : "goes on"));
+                    if (want) {
+                        heldAt = now;
+                    }
+                    AppLog.note(c, "helper " + job + ": " + (want ? "held (" + holdWhy + ")"
+                            : "goes on after " + (now - heldAt) / 1000 + " s held"));
+                }
+                // where the time goes, for a report from a slow phone: every 2 minutes (not while held)
+                if (!held && now - probeAt >= PROBE_MS) {
+                    long cpu = cpuTicks(pid);
+                    AppLog.note(c, "helper " + job + ": " + probeLine((now - t0mono) / 60_000, rssKb(pid),
+                            cpu >= 0 && probeCpu >= 0 ? cpu - probeCpu : -1, now - probeAt, CrashReport.memInfoKb("MemAvailable"),
+                            CrashReport.thermal(c), RunStats.cpus(pid), pressure()));
+                    probeAt = now;
+                    probeCpu = cpu;
                 }
                 if (cancelled.getAsBoolean()) {
                     if (held) {
@@ -563,10 +623,46 @@ final class Helper {
                 }
             }
         }
+        if (r.rc == 0 && "build-root".equals(job)) {
+            clearMemoryKills(c);
+        }
         AppLog.note(c, "helper " + job + ": rc " + r.rc + " in " + r.seconds + " s" + (r.rc != 0 ? " (" + r.failure() + "; QEMU "
                 + CrashText.describeStatus(r.status) + ", lowest MemAvailable " + r.lowestAvailKb / 1024 + " MB, QEMU's RSS up to "
                 + r.peakRssKb / 1024 + " MB)" : ""));
         return r;
+    }
+
+    private static final long PROBE_MS = 120_000;
+
+    /**
+     * One line for the app's log every PROBE_MS while a helper job runs: how long, QEMU's resident set, how many of the
+     * phone's cores QEMU and its stubs kept busy over the last interval (@cpuTicks of CLK_TCK = 100 per second, over
+     * @ms: 100 = one core), what the phone has left, its thermal status, the cores the app may use, and memory
+     * pressure. A slow run that dies leaves these in the report: busy cores with little progress mean the phone's
+     * CPU is the limit; few busy cores mean it waits on memory or storage.
+     */
+    static String probeLine(long minutes, long rssKb, long cpuTicks, long ms, long availKb, String thermal, String cpus, String psi) {
+        String busy = cpuTicks < 0 || ms <= 0 ? "?" : String.valueOf(cpuTicks * 1000 / ms);
+        return minutes + " min: QEMU RSS " + (rssKb < 0 ? "?" : rssKb / 1024 + " MB") + ", busy " + busy + " % of one core, MemAvailable "
+                + (availKb < 0 ? "?" : availKb / 1024 + " MB") + ", thermal " + thermal + ", cpuset " + cpus + ", memory pressure " + psi;
+    }
+
+    /** The "some avg10" figure of /proc/pressure/memory (percent of the last 10 s some task waited for memory); "n/a" when unreadable. */
+    private static String pressure() {
+        try {
+            for (String l : java.nio.file.Files.readAllLines(new File("/proc/pressure/memory").toPath(), StandardCharsets.US_ASCII)) {
+                if (l.startsWith("some")) {
+                    for (String w : l.split(" ")) {
+                        if (w.startsWith("avg10=")) {
+                            return w.substring(6) + " %";
+                        }
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            // Android lets an app read it only on some versions
+        }
+        return "n/a";
     }
 
     /** QEMU's resident set (VmRSS, the guest RAM it has touched with it), in kB; -1 when /proc does not say. */
