@@ -27,6 +27,8 @@ final class WorksRun {
     int coldS = -1, loadS = -1;
     /** the live view's newest fps (-1 = it was never drawing); the EL sampler's newest shares (-1 = none) */
     double fps = -1, halted = -1, el1 = -1, el0tcg = -1, el0nat = -1;
+    /** the most changed frames the live view showed in any one second of the run (-1 = unknown, e.g. a file from before it was kept) */
+    int peakFps = -1;
     /** guest RAM in MiB (0 = unknown) and the screen ("" = none or fixed) */
     int ramMiB;
     String screen = "";
@@ -50,6 +52,7 @@ final class WorksRun {
         b.append(",\"coldS\":").append(coldS);
         b.append(",\"loadS\":").append(loadS);
         b.append(",\"fps\":").append(fps);
+        b.append(",\"peakFps\":").append(peakFps);
         b.append(",\"halted\":").append(halted);
         b.append(",\"el1\":").append(el1);
         b.append(",\"el0tcg\":").append(el0tcg);
@@ -78,6 +81,7 @@ final class WorksRun {
         r.coldS = (int) MiniJson.num(m, "coldS", -1);
         r.loadS = (int) MiniJson.num(m, "loadS", -1);
         r.fps = MiniJson.num(m, "fps", -1);
+        r.peakFps = (int) MiniJson.num(m, "peakFps", -1);
         r.halted = MiniJson.num(m, "halted", -1);
         r.el1 = MiniJson.num(m, "el1", -1);
         r.el0tcg = MiniJson.num(m, "el0tcg", -1);

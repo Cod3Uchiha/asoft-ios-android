@@ -30,6 +30,7 @@ public class WorksTextTest {
         r.coldS = 130;
         r.loadS = 22;
         r.fps = 14.25;
+        r.peakFps = 17;
         r.halted = 3;
         r.el1 = 60;
         r.el0tcg = 7;
@@ -66,7 +67,8 @@ public class WorksTextTest {
         assertTrue(body.contains("\nSetup: 1 h 15 min in total (Download 26 min, Build the disk 49 min)\n"));
         assertTrue(body.contains("\nCold boot: first frame of the live view 2 min 10 s after QEMU started\n"));
         assertTrue(body.contains("\nQuick-save load: first frame of the live view 22 s after QEMU started\n"));
-        assertTrue(body.contains("\nLive view: 14.3 fps\n") || body.contains("\nLive view: 14.2 fps\n"));
+        assertTrue(body.contains("\nLive view: up to 17 fps (the busiest second of the run)\n"));
+        assertFalse(body.contains("14."));
         assertTrue(body.contains("\nvCPUs: halted 3%, el1 60%, el0-tcg 7%, el0-native 30%\n"));
         assertTrue(body.contains("\nThermal: 2 (moderate) at the highest during the run\n"));
         assertTrue(body.endsWith("\n\nAnything that does not work: "));
@@ -79,6 +81,7 @@ public class WorksTextTest {
         i.run.coldS = -1;
         i.run.loadS = -1;
         i.run.fps = -1;
+        i.run.peakFps = -1;
         i.run.halted = -1;
         i.run.thermalMax = -1;
         i.run.lowestAvailMb = -1;
@@ -89,6 +92,27 @@ public class WorksTextTest {
         assertTrue(body.contains("vCPUs: no sample"));
         assertTrue(body.contains("Thermal: unknown"));
         assertFalse(body.contains("MemAvailable"));
+    }
+
+    @Test
+    public void liveViewLineByPeakAndAverage() {
+        WorksText.In i = in();
+        i.run.peakFps = 1;
+        assertTrue(WorksText.facts(i).contains("Live view: up to 1 fps (the busiest second of the run)"));
+        // the screen was open but showed nothing (peak 0) or the peak is unknown: no line, and never the average
+        for (int peak : new int[] {0, -1}) {
+            i.run.peakFps = peak;
+            i.run.fps = 0.0;
+            for (String line : WorksText.facts(i)) {
+                assertFalse(line, line.startsWith("Live view"));
+            }
+        }
+        // the screen was never open
+        i.run.fps = -1;
+        i.run.peakFps = 0;
+        assertTrue(WorksText.facts(i).contains("Live view: not measured (the screen was not open)"));
+        i.run.peakFps = -1;
+        assertTrue(WorksText.facts(i).contains("Live view: not measured (the screen was not open)"));
     }
 
     @Test

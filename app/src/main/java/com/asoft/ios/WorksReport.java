@@ -121,10 +121,10 @@ final class WorksReport {
 
     /**
      * RunStats' periodic line of a run that has shown its first frame (@firstFrameS) and has lived @aliveS: keeps the
-     * run once it is a good one (WorksRun.GOOD_ALIVE_S) and updates it after that. The first-frame time of the
+     * run (@peakFps: the most changed frames the live view showed in one second, 0 = none) once it is a good one (WorksRun.GOOD_ALIVE_S) and updates it after that. The first-frame time of the
      * other kind of start (cold boot or load) stays from an earlier run of this app version.
      */
-    static synchronized void keep(Context c, int os, boolean resumed, int firstFrameS, int aliveS, double fps, RunStats.El el,
+    static synchronized void keep(Context c, int os, boolean resumed, int firstFrameS, int aliveS, double fps, int peakFps, RunStats.El el,
             int ramMiB, String screen, int thermalMax, long lowestAvailMb) {
         if (firstFrameS < 0 || aliveS < WorksRun.GOOD_ALIVE_S) {
             return;
@@ -147,6 +147,7 @@ final class WorksReport {
             r.coldS = firstFrameS;
         }
         r.fps = fps;
+        r.peakFps = peakFps;
         if (el != null) {
             r.halted = el.halted;
             r.el1 = el.el1;

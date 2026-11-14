@@ -18,6 +18,29 @@ public class RunStatsTest {
             + "reims[info] reims_vgpu_vulkan::os: reims-vgpu: views census: held 1444 of budget 49146 (vm.max_map_count 65530)\n";
 
     @Test
+    public void peakIsTheBusiestWholeSecond() {
+        RunStats.Peak p = new RunStats.Peak();
+        assertEquals(0, p.peak());
+        p.add(5_000);
+        p.add(5_400);
+        p.add(5_999);                       // one second: 3 frames
+        assertEquals(3, p.peak());
+        p.add(6_000);                       // a new second closes the old one; the open one counts too
+        assertEquals(3, p.peak());
+        p.add(6_100);
+        p.add(6_200);
+        p.add(6_300);
+        p.add(6_400);
+        assertEquals(5, p.peak());
+        p.add(9_000);                       // an idle stretch: the maximum stays
+        assertEquals(5, p.peak());
+        p.reset();
+        assertEquals(0, p.peak());
+        p.add(1_000);
+        assertEquals(1, p.peak());
+    }
+
+    @Test
     public void takesTheLastSamplerLine() {
         RunStats.El e = RunStats.lastEl(STDERR);
         assertNotNull(e);

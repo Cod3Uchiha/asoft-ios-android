@@ -83,7 +83,11 @@ final class WorksText {
         if (r.loadS >= 0) {
             f.add("Quick-save load: first frame of the live view " + dur(r.loadS) + " after QEMU started");
         }
-        f.add("Live view: " + (r.fps < 0 ? "not measured (the screen was not open)" : String.format(Locale.ROOT, "%.1f fps", r.fps)));
+        if (r.peakFps >= 1) {
+            f.add("Live view: up to " + r.peakFps + " fps (the busiest second of the run)");
+        } else if (r.fps < 0) {
+            f.add("Live view: not measured (the screen was not open)");
+        }
         f.add("vCPUs: " + (r.halted < 0 ? "no sample" : "halted " + pct(r.halted)
                 + (r.el1 < 0 ? "" : ", el1 " + pct(r.el1) + ", el0-tcg " + pct(r.el0tcg) + ", el0-native " + pct(r.el0nat))));
         f.add("Thermal: " + (r.thermalMax < 0 ? "unknown"

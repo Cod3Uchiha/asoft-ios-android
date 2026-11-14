@@ -44,6 +44,7 @@ public class WorksRunTest {
         r.coldS = 125;
         r.loadS = 20;
         r.fps = 12.5;
+        r.peakFps = 9;
         r.halted = 3;
         r.el1 = 60;
         r.el0tcg = 7;
@@ -63,6 +64,7 @@ public class WorksRunTest {
         assertEquals(125, b.coldS);
         assertEquals(20, b.loadS);
         assertEquals(12.5, b.fps, 0.001);
+        assertEquals(9, b.peakFps);
         assertEquals(3, b.halted, 0.001);
         assertEquals(60, b.el1, 0.001);
         assertEquals(7, b.el0tcg, 0.001);
@@ -71,6 +73,18 @@ public class WorksRunTest {
         assertEquals("2x (786x1704)", b.screen);
         assertEquals(3, b.thermalMax);
         assertEquals(1900, b.lowestAvailMb);
+    }
+
+    @Test
+    public void aFileWithoutPeakFpsParsesWithItUnknown() {
+        WorksRun r = run();
+        r.peakFps = 7;
+        String json = r.toJson();
+        assertTrue(json.contains(",\"peakFps\":7"));
+        WorksRun b = WorksRun.fromJson(json.replace(",\"peakFps\":7", ""));
+        assertNotNull(b);
+        assertEquals(-1, b.peakFps);
+        assertEquals(-1, run().peakFps);
     }
 
     @Test

@@ -48,6 +48,7 @@ final class RunStats {
     private static volatile int firstFrameS = -1;
     private static volatile int thermalMax = -1;
     private static double lastFps = -1;
+    private static final Peak peak = new Peak();
     private static El newestEl;
 
     /** The lowest MemAvailable (kB) sampled during the run of QEMU @p; -1 when none (or another run's). */
@@ -66,6 +67,38 @@ final class RunStats {
             if (pm != null) {
                 thermalMax = Math.max(thermalMax, pm.getCurrentThermalStatus());
             }
+        }
+    }
+
+    /**
+     * The most changed frames of the live view in any one whole second of a run (the busiest second): frames are
+     * counted per second of the clock, a new second closes the one before. Not thread-safe; RunStats holds LOCK.
+     */
+    static final class Peak {
+        private long sec = -1;
+        private int count;
+        private int best;
+
+        /** One changed frame at @nowMs (a monotonic clock in ms). */
+        void add(long nowMs) {
+            long s = nowMs / 1000;
+            if (s != sec) {
+                best = Math.max(best, count);
+                sec = s;
+                count = 0;
+            }
+            count++;
+        }
+
+        /** The busiest second so far, the open one included; 0 when no frame was counted. */
+        int peak() {
+            return Math.max(best, count);
+        }
+
+        void reset() {
+            sec = -1;
+            count = 0;
+            best = 0;
         }
     }
 
@@ -160,6 +193,7 @@ final class RunStats {
             firstFrameS = -1;
             thermalMax = -1;
             lastFps = -1;
+            peak.reset();
             newestEl = null;
         }
         AppLog.note(a, "run: " + Guest.osName(os) + " " + (resumed ? "quick-save load" : "cold boot") + ", "
@@ -186,6 +220,7 @@ final class RunStats {
             lastFrameMs = now;
             if (changed) {
                 periodFrames++;
+                peak.add(now);
                 if (!firstFrameLogged) {
                     firstFrameLogged = true;
                     log = app;
@@ -220,6 +255,7 @@ final class RunStats {
             String tail = tail(new File(Guest.runDir(c), "qemu-stderr.txt"));
             double fps = -1;
             long viewS = 0;
+            int peakFps;
             synchronized (LOCK) {
                 if (periodViewMs >= 2000) {
                     fps = periodFrames * 1000.0 / periodViewMs;
@@ -227,6 +263,7 @@ final class RunStats {
                 }
                 periodFrames = 0;
                 periodViewMs = 0;
+                peakFps = peak.peak();
             }
             El el = lastEl(tail);
             AppLog.note(c, line(s, el, lastCensus(tail), fps, viewS, availMb(), CrashReport.thermal(c), cpus(p)));
@@ -239,7 +276,7 @@ final class RunStats {
             }
             if (pid == p) {
                 long low = lowestKb;
-                WorksReport.keep(c, runOs, runResumed, firstFrameS, (int) s, lastFps, newestEl, runRamMiB, runScreen, thermalMax,
+                WorksReport.keep(c, runOs, runResumed, firstFrameS, (int) s, lastFps, peakFps, newestEl, runRamMiB, runScreen, thermalMax,
                         low < 0 ? -1 : low / 1024);
             }
         }
