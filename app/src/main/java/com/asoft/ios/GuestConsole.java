@@ -27,6 +27,7 @@ final class GuestConsole implements AutoCloseable {
     private Thread reader;
     private final StringBuilder buf = new StringBuilder();
     private int n;
+    private volatile SetupTick.Poll lastPoll = SetupTick.Poll.NOT_SENT;
 
     GuestConsole(File path) {
         this.path = path;
@@ -88,6 +89,7 @@ final class GuestConsole implements AutoCloseable {
      * last one (or behind a command still running) never started, and nothing else cleared bash's input.
      */
     String run(String cmd, long waitMs, long retryMs, boolean reset) {
+        lastPoll = SetupTick.Poll.NOT_SENT;
         long until = System.currentTimeMillis() + waitMs;
         while (System.currentTimeMillis() < until) {
             if (!connect()) {
@@ -113,11 +115,16 @@ final class GuestConsole implements AutoCloseable {
                 }
                 o.write(("echo @@" + tag + "\"S\"@@; " + cmd + "; echo @@" + tag + "\"E\"@@\r").getBytes(StandardCharsets.UTF_8));
                 o.flush();
+                advance(SetupTick.Poll.SENT);
                 long again = Math.min(until, System.currentTimeMillis() + retryMs);
                 while (System.currentTimeMillis() < again) {
                     synchronized (buf) {
                         int i = buf.indexOf(start);
                         int j = i >= 0 ? buf.indexOf(end, i + 1) : -1;
+                        if (i >= 0) {
+                            // (the unquoted marker is bash's own output: the echoed command line has it quoted)
+                            advance(j > i ? SetupTick.Poll.DONE : SetupTick.Poll.STARTED);
+                        }
                         if (j > i && i >= 0) {
                             String got = buf.substring(i + start.length(), j);
                             buf.delete(0, j + end.length());
@@ -133,6 +140,17 @@ final class GuestConsole implements AutoCloseable {
             }
         }
         return null;
+    }
+
+    /** How far the last run() got (never goes back within one run: a retry has a new tag). */
+    SetupTick.Poll lastPoll() {
+        return lastPoll;
+    }
+
+    private void advance(SetupTick.Poll p) {
+        if (p.ordinal() > lastPoll.ordinal()) {
+            lastPoll = p;
+        }
     }
 
     /** True when the console has shown @word and no command's answer has taken it out of the buffer since. */

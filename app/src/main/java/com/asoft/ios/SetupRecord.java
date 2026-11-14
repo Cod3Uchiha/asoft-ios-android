@@ -127,6 +127,14 @@ final class SetupRecord {
             File run = Guest.runDir(c);
             s.put("the boot's console (serial.txt)", CrashReport.tail(new File(run, "serial.txt"), 150));
             s.put("the boot's QEMU stderr", CrashReport.stderrEvidence(new File(run, "qemu-stderr.txt")));
+            // the 64 KB slices a DataMigration stall kept (PhoneSetup26.stalled): the newest two stalls, whose boots are gone
+            File logs = new File(PhoneSetup26.work(c), "phone/logs");
+            String[] have = step.endsWith(":wallpaper") ? logs.list() : null;
+            if (have != null) {
+                for (String n : SetupTick.newestStallFiles(have, 2)) {
+                    s.put("kept at a stall: " + n, CrashReport.tail(new File(logs, n), 4000));
+                }
+            }
         }
         if (e != null && !(e instanceof java.io.IOException)) {
             s.put("java stack trace", stack(e));

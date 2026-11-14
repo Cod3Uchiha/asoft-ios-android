@@ -1257,6 +1257,7 @@ final class PhoneSetup26 {
             long suspend0 = android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis();
             long lastTick = -1;
             boolean toldSilent = false;
+            LoopLate late = new LoopLate();
             while (true) {
                 if (cancelled.getAsBoolean()) {
                     throw new IOException("stopped");
@@ -1268,6 +1269,7 @@ final class PhoneSetup26 {
                         : "DataMigration is taking longer than usual (" + min + " min; a phone needs about 60 to 75)."
                                 + " It can take a few hours on a slow phone; leave it running.") + watch.quietStatus(System.currentTimeMillis()));
                 String o = con.run("cat " + plist, 90_000, 60_000);
+                SetupTick.Poll poll = con.lastPoll();
                 long now = System.currentTimeMillis();
                 watch.observe(now, o != null, ConsoleLife.readNew(serial, watchAt, 1 << 20), framesShown(c));
                 if (o != null) {
@@ -1293,7 +1295,7 @@ final class PhoneSetup26 {
                     toldSilent |= first;
                     long susp = android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis() - suspend0;
                     AppLog.note(c, "setup26: " + tick.tick((int) min, first ? "first no answer" : "5 min", framesShown(c), susp / 1000,
-                            (now - t0) / 1000));
+                            (now - t0) / 1000) + ", " + SetupTick.pollText(poll, o != null, (now - answered) / 60_000) + ", " + hostText(c, late.takeMax()));
                     if (first) {
                         tick.silent();
                     }
@@ -1322,9 +1324,16 @@ final class PhoneSetup26 {
                     throw new IOException("DataMigration is still not done after " + min + " min, although iOS keeps answering. Tap Resume to redo this boot.");
                 }
                 if (v != MigrationWatch.Verdict.WAIT) {
-                    throw stalled(c, serial, watch, v, now, min, framesShown(c));
+                    throw stalled(c, serial, watch, v, now, min, framesShown(c),
+                            SetupTick.pollText(poll, o != null, watch.silentMin(now)) + ", " + hostText(c, late.takeMax()));
                 }
+                long slept0 = android.os.SystemClock.elapsedRealtime();
                 sleep(30_000);
+                long lateMs = late.sleep(30_000, android.os.SystemClock.elapsedRealtime() - slept0);
+                if (lateMs >= 30_000) {
+                    // a round that took twice its time: the app was frozen or the phone dozed (K18's overshoot)
+                    AppLog.note(c, "setup26: DataMigration loop woke " + lateMs / 1000 + " s late (phone asleep or app frozen)");
+                }
             }
             AppLog.note(c, "setup26: DataMigration done after " + (System.currentTimeMillis() - t1) / 1000 + " s");
             long t2 = System.currentTimeMillis();
@@ -1339,7 +1348,7 @@ final class PhoneSetup26 {
             // (#37 and #19: the shell answered up to here and not after PosterBoard's wait: did it die in it?)
             AppLog.note(c, "setup26: " + tick.tick((int) ((System.currentTimeMillis() - t1) / 60_000), "end of PosterBoard's wait", framesShown(c),
                     (android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis() - suspend0) / 1000,
-                    (System.currentTimeMillis() - t0) / 1000));
+                    (System.currentTimeMillis() - t0) / 1000) + ", " + hostText(c, late.takeMax()));
             p.step("ios26:wallpaper", 98, "Saving the disk");
             saveBoot(c, con, in(c, "root.qcow2"), "ios26:wallpaper");
             new File(work(c), "phone/stalls.txt").delete();        // a finished boot ends the count of stalls
@@ -1357,7 +1366,7 @@ final class PhoneSetup26 {
      * boot. The user reads the error: plainly that iOS stopped, that Resume boots it again, and from the third
      * identical stall that a report helps.
      */
-    private static IOException stalled(Context c, File serial, MigrationWatch watch, MigrationWatch.Verdict v, long now, long min, int frames) {
+    private static IOException stalled(Context c, File serial, MigrationWatch watch, MigrationWatch.Verdict v, long now, long min, int frames, String state) {
         long silent = watch.silentMin(now);
         String kind = v == MigrationWatch.Verdict.STALL_CHURN ? "churn" : v == MigrationWatch.Verdict.STALL_DEAD ? "dead" : "silent";
         File stalls = new File(work(c), "phone/stalls.txt");
@@ -1370,7 +1379,7 @@ final class PhoneSetup26 {
         SetupTick.slice(serial, Math.max(0, serial.length() - SetupTick.SLICE), SetupTick.SLICE, new File(logs, "wallpaper-serial-stall-" + n + ".txt"));
         SetupTick.slice(err, Math.max(0, err.length() - SetupTick.SLICE), SetupTick.SLICE, new File(logs, "wallpaper-stderr-stall-" + n + ".txt"));
         AppLog.note(c, "setup26: stall " + n + " (" + kind + ") at minute " + min + ": shell silent " + silent + " min, console pid max "
-                + watch.maxPid() + ", frames " + frames + "; the last 64 KB of console and QEMU's stderr are in phone/logs (wallpaper-*-stall-" + n + ".txt)");
+                + watch.maxPid() + ", frames " + frames + ", " + state + "; the last 64 KB of console and QEMU's stderr are in phone/logs (wallpaper-*-stall-" + n + ".txt)");
         return new IOException(StallHistory.userText(MigrationWatch.stallText(v, silent), n));
     }
 
@@ -1601,6 +1610,23 @@ final class PhoneSetup26 {
     static int thermal(Context c) {
         android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
         return pm == null ? -1 : pm.getCurrentThermalStatus();
+    }
+
+    /** The phone's state for a log line (SetupTick.hostText): screen, doze, power saving, battery whitelist, charger, heat. */
+    static String hostText(Context c, long lateMs) {
+        int on = -1, idle = -1, save = -1, white = -1;
+        try {
+            android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
+            if (pm != null) {
+                on = pm.isInteractive() ? 1 : 0;
+                idle = pm.isDeviceIdleMode() ? 1 : 0;
+                save = pm.isPowerSaveMode() ? 1 : 0;
+                white = pm.isIgnoringBatteryOptimizations(c.getPackageName()) ? 1 : 0;
+            }
+        } catch (RuntimeException ignored) {
+            // a line without them is no harm
+        }
+        return SetupTick.hostText(lateMs, on, idle, save, white, charging(c) ? 1 : 0, thermal(c));
     }
 
     static boolean shouldHold(Context c) {
