@@ -837,15 +837,47 @@ final class CrashReport {
      * clipboard for what did not. The user reads it there and submits it, or not. Off the UI thread: it scrubs.
      */
     static void openIssue(Activity a, Record r) {
-        new Thread(() -> {
+        once(a, CrashText.reportKey(today(), r.kind, r.cause), () -> new Thread(() -> {
             String title = reportTitle(r), all = title + "\n\n" + report(a, r, false);
             String url = CrashText.issueUrl(REPO, title, report(a, r, true));
             a.runOnUiThread(() -> issueNow(a, all, url));
-        }, "report-issue").start();
+        }, "report-issue").start());
+    }
+
+    private static String today() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(new java.util.Date());
+    }
+
+    /**
+     * Runs @open, unless a report with this @key (CrashText.reportKey: same kind, same cause, same day) was opened
+     * before: then the user is told so and opens it again only on purpose. From the UI thread.
+     */
+    static void once(Activity a, String key, Runnable open) {
+        SharedPreferences p = prefs(a);
+        Set<String> opened = new HashSet<>(p.getStringSet("reported", new HashSet<>()));
+        Runnable go = () -> {
+            p.edit().putStringSet("reported", CrashText.rememberReport(opened, today(), key)).apply();
+            open.run();
+        };
+        if (!opened.contains(key)) {
+            go.run();
+            return;
+        }
+        new AlertDialog.Builder(a)
+                .setTitle("Already opened")
+                .setMessage("You opened a report for this today. A second one only repeats the first. Open it again?")
+                .setPositiveButton("Open again", (d, w) -> go.run())
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /** As above for a log that is no record (the app's log, the GPU check's): @blocks under @facts. */
     static void openIssue(Activity a, String title, String what, String cause, LinkedHashMap<String, String> facts,
+            List<CrashText.Block> blocks) {
+        once(a, CrashText.reportKey(today(), "log", title), () -> openIssueNow(a, title, what, cause, facts, blocks));
+    }
+
+    private static void openIssueNow(Activity a, String title, String what, String cause, LinkedHashMap<String, String> facts,
             List<CrashText.Block> blocks) {
         new Thread(() -> {
             Map<String, String> pre = prefixes(a);
@@ -858,6 +890,17 @@ final class CrashReport {
             String url = CrashText.issueUrl(REPO, title, CrashText.fitBody(REPO, title, facts, w, cs, clean, MAX_URL));
             a.runOnUiThread(() -> issueNow(a, all, url));
         }, "report-issue").start();
+    }
+
+    /** GitHub's search of the app's issues for a GPU family (CrashText.gpuFamily): the issue that tracks it. */
+    static void openGpuIssues(Activity a, String family) {
+        open(a, CrashText.gpuIssuesUrl(REPO, family));
+    }
+
+    /** A new issue with only the app's and phone's facts and the question: for a problem the logs do not show. */
+    static void openInWords(Activity a, LinkedHashMap<String, String> facts) {
+        open(a, CrashText.issueUrl(REPO, "", CrashText.body(facts, "Nothing in the app's log (opened from Logs)", "(none)",
+                new ArrayList<CrashText.Block>(), false)));
     }
 
     private static void issueNow(Activity a, String all, String url) {
@@ -987,10 +1030,10 @@ final class CrashReport {
         new AlertDialog.Builder(a)
                 .setTitle("Report: " + r.summary())
                 .setView(sv)
-                .setPositiveButton("Open on GitHub", (dl, w) -> {
+                .setPositiveButton("Open on GitHub", (dl, w) -> once(a, CrashText.reportKey(today(), r.kind, r.cause), () -> {
                     copy(a, all);
                     open(a, CrashText.issueUrl(REPO, title, report(a, r, true)));
-                })
+                }))
                 .setNeutralButton("Copy", (dl, w) -> {
                     copy(a, all);
                     Toast.makeText(a, "Copied", Toast.LENGTH_SHORT).show();
