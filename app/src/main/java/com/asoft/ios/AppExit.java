@@ -343,6 +343,9 @@ final class AppExit {
         String activity = old == null ? null : activity(old);
         if (activity != null && oldPid != handled) {
             boolean updated = !String.valueOf(versionCode(c)).equals(old.getProperty("version"));
+            if (forMarker != null && forMarker.reason == CrashText.EXIT_LOW_MEMORY && old.getProperty("helper") != null) {
+                Helper.noteMemoryKill(c);
+            }
             // a marker from before the phone's last start: it was switched off or restarted (or its battery ran
             // out) while something went on, which is not the app's end unless Android kept one for that process
             long bootMs = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime();
