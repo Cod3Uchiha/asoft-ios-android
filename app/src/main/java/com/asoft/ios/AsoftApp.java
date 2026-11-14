@@ -15,6 +15,7 @@ public class AsoftApp extends Application {
         // and its check says so itself
         if (getPackageName().equals(Application.getProcessName())) {
             AppExit.onStart(this);
+            CounterFreq.logOnce(this);
         }
     }
 }

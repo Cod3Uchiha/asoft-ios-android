@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -203,6 +204,41 @@ Java_com_asoft_ios_Render_spawn(JNIEnv *env, jclass cls, jobjectArray jargv, job
 static struct { int pid, status; } ends[ENDS];
 static int ends_next;
 static pthread_mutex_t ends_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+ * The phone's counter frequency, CNTFRQ_EL0 (what x-host-counter's guests tick at; CounterFreq.java).
+ * EL0 may read it on Linux; a kernel that trapped it would raise SIGILL, which ends the read with 0
+ * instead of the app.
+ */
+static sigjmp_buf cntfrq_jmp;
+
+static void cntfrq_ill(int sig)
+{
+    (void)sig;
+    siglongjmp(cntfrq_jmp, 1);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_asoft_ios_Render_counterHz(JNIEnv *env, jclass cls)
+{
+#if defined(__aarch64__)
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = cntfrq_ill;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGILL, &sa, &old);
+    uint64_t f = 0;
+    if (sigsetjmp(cntfrq_jmp, 1) == 0) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    } else {
+        f = 0;
+    }
+    sigaction(SIGILL, &old, NULL);
+    return (jlong)f;
+#else
+    return 0;
+#endif
+}
 
 /* true while @pid lives; reaps it when it has ended, and keeps how it ended for endStatus() */
 JNIEXPORT jboolean JNICALL

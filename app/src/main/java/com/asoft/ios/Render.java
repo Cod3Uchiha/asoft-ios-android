@@ -31,6 +31,9 @@ final class Render {
      */
     static native int spawn(String[] argv, String[] envp, String log, String cwd);
 
+    /** CNTFRQ_EL0, the phone's counter frequency in Hz; 0 when it cannot be read (CounterFreq caches and checks it). */
+    static native long counterHz();
+
     static native boolean alive(int pid);
 
     /** The raw wait status @pid ended with, as the alive() that reaped it saw it; -1 when unknown. */

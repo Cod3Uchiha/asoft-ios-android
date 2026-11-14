@@ -594,6 +594,28 @@ final class Guest {
     }
 
     /**
+     * The device tree @path with the phone's counter frequency in every CPU's timebase-frequency (the guest runs on
+     * the phone's counter, x-host-counter): the same file when it has it already (a Snapdragon with the -19m2 trees),
+     * else a patched copy (CounterFreq.fit). On a 19.2 MHz phone a tree that cannot be read is left alone, as before.
+     */
+    private static String fitCounter(Context c, String path) throws IOException {
+        long hz = CounterFreq.hz();
+        try {
+            File f = CounterFreq.fit(c.getFilesDir(), new File(path), hz);
+            if (!f.getPath().equals(path)) {
+                AppLog.note(c, "device tree " + new File(path).getName() + " has another timebase than this phone's counter ("
+                        + hz + " Hz): started with " + f.getName());
+            }
+            return f.getPath();
+        } catch (IOException e) {
+            if (hz == CounterFreq.DEFAULT_HZ) {
+                return path;
+            }
+            throw new IOException("cannot set the phone's counter frequency (" + hz + " Hz) in " + path + ": " + e.getMessage());
+        }
+    }
+
+    /**
      * @src with @mib of RAM (/chosen dram-size, the size in /memory reg, /product/util's base right after it:
      * dt-phone.py --ram-gib) and, @twoX, /chosen/display-scale 2; written next to the app's files when missing or
      * older. The tree itself is returned when nothing changes.
@@ -1271,7 +1293,7 @@ final class Guest {
         }
         if (ios26Running()) {       // iOS 26 and the watch run on the host counter (the watch on its 19.2 MHz tree)
             try (PrintWriter w = new PrintWriter(new FileWriter(savedClockFile(c, tag)))) {
-                w.println(runningOs == WATCH ? WatchProfile.CLOCK : CLOCK_V1);
+                w.println(CounterFreq.clockNote(runningOs == WATCH ? WatchProfile.CLOCK : CLOCK_V1, CounterFreq.hz()));
             } catch (IOException ignored) {
                 // then it counts as a save from before the clock fix
             }
@@ -1296,8 +1318,25 @@ final class Guest {
         return new File(c.getFilesDir(), userPrefix(c) + tag + ".clock");
     }
 
+    /** The counter frequency save @tag ran on: its clock note's "@HZ", else 19.2 MHz (a save with no note is from then too). */
+    private static long savedClockHz(Context c, String tag) {
+        try {
+            return CounterFreq.noteHz(new String(java.nio.file.Files.readAllBytes(savedClockFile(c, tag).toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return CounterFreq.DEFAULT_HZ;
+        }
+    }
+
     /** Why iOS 26's save @tag cannot load on this phone now, or null when it can. */
     private static String unloadable26(Context c, String tag) {
+        // the guest's kernel worked out its time conversion at its boot from the tree's frequency: a save made on
+        // another counter frequency (a bundle from a PC or another phone, or a save from before this check on a
+        // phone that is not 19.2 MHz) ticks at the wrong rate here
+        long savedHz = savedClockHz(c, tag), hz = CounterFreq.hz();
+        if (savedHz != hz) {
+            return "it was saved on a " + (savedHz > 0 ? savedHz + " Hz" : "different") + " counter, this phone's is " + hz + " Hz";
+        }
         if (runningOs == WATCH) {
             // a watch save loads only if it ran on the host counter with the 19.2 MHz tree, as the watch runs now:
             // one from QEMU's own 24 MHz counter (before 2026-11-07 20:40) would tick at the wrong rate
@@ -1308,7 +1347,7 @@ final class Guest {
             } catch (IOException ignored) {
                 // no file: an old save
             }
-            return WatchProfile.CLOCK.equals(said) ? null
+            return CounterFreq.clockNote(WatchProfile.CLOCK, hz).equals(said) ? null
                     : "it was saved on the watch's older clock (QEMU's own counter), which the watch no longer runs on";
         }
         if (savedClockFile(c, tag).isFile()) {
@@ -2157,6 +2196,7 @@ final class Guest {
             tc = watch ? WatchProfile.part(c, WatchProfile.TC).getPath() : tc26(c).getPath();
             AppLog.note(c, "guest RAM " + ram + " MiB" + (resumed ? " (the save's)" : ""));
         }
+        dtree = fitCounter(c, dtree);
         AppLog.note(c, "screen " + fb26W + "x" + fb26H + (twoX ? " (2x)" : "") + ", device tree " + dtree
                 + (aod ? ", Always On Display (" + AOD26_BASE + ")" : ""));
         List<String> cmd = new ArrayList<>(List.of(Emu.qemu26Path(c), "-name", watch ? "ASoftware watchOS" : "ASoftware iOS 26",
