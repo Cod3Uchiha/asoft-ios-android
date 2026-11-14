@@ -1251,6 +1251,9 @@ final class PhoneSetup26 {
             // the line of K18's record (SetupTick): every 5 min and at the first no answer, from the console and stderr alone
             SetupTick tick = new SetupTick(serial, new File(Guest.runDir(c), "qemu-stderr.txt"), new File(work(c), "phone/logs"),
                     "wallpaper", framesThen);
+            // what to wait for and when to call it a stall: SetupLimits, MigrationWatch (the shell's silence, the console, the frames)
+            MigrationWatch watch = new MigrationWatch(t1);
+            long[] watchAt = {serial.length()};
             long suspend0 = android.os.SystemClock.elapsedRealtime() - android.os.SystemClock.uptimeMillis();
             long lastTick = -1;
             boolean toldSilent = false;
@@ -1260,12 +1263,13 @@ final class PhoneSetup26 {
                 }
                 mustRun(c, "DataMigration");
                 long min = (System.currentTimeMillis() - t1) / 60_000;
-                p.step("ios26:wallpaper", 15 + (int) Math.min(70, min * 70 / 60), min <= 75
+                p.step("ios26:wallpaper", 15 + (int) Math.min(70, min * 70 / 60), (min <= 75
                         ? "DataMigration is setting iOS up (" + min + " min; on a PC about " + SystemAppMigrator.pcMinutes(sam) + "). The phone may get warm."
                         : "DataMigration is taking longer than usual (" + min + " min; a phone needs about 60 to 75)."
-                                + " It can take up to two hours on a phone; leave it running.");
+                                + " It can take a few hours on a slow phone; leave it running.") + watch.quietStatus(System.currentTimeMillis()));
                 String o = con.run("cat " + plist, 90_000, 60_000);
                 long now = System.currentTimeMillis();
+                watch.observe(now, o != null, ConsoleLife.readNew(serial, watchAt, 1 << 20), framesShown(c));
                 if (o != null) {
                     answered = now;
                     quietTold = 0;
@@ -1313,8 +1317,12 @@ final class PhoneSetup26 {
                     AppLog.note(c, "setup26: DataMigration " + min + " min, thermal " + thermal(c) + ", crash reports: "
                             + (d == null ? "(no answer)" : d.trim()));
                 }
-                if (min > 180) {
-                    throw new IOException("DataMigration was not done in 3 hours; tap Resume to redo this boot");
+                MigrationWatch.Verdict v = watch.verdict(now);
+                if (v == MigrationWatch.Verdict.CEILING) {
+                    throw new IOException("DataMigration is still not done after " + min + " min, although iOS keeps answering. Tap Resume to redo this boot.");
+                }
+                if (v != MigrationWatch.Verdict.WAIT) {
+                    throw stalled(c, serial, watch, v, now, min, framesShown(c));
                 }
                 sleep(30_000);
             }
@@ -1334,12 +1342,36 @@ final class PhoneSetup26 {
                     (System.currentTimeMillis() - t0) / 1000));
             p.step("ios26:wallpaper", 98, "Saving the disk");
             saveBoot(c, con, in(c, "root.qcow2"), "ios26:wallpaper");
+            new File(work(c), "phone/stalls.txt").delete();        // a finished boot ends the count of stalls
         } catch (IOException | RuntimeException e) {
             if (Guest.running()) {
                 endBoot(c, null);
             }
             throw e;
         }
+    }
+
+    /**
+     * A DataMigration boot whose iOS stopped responding (MigrationWatch): keeps the evidence (the console's and
+     * QEMU's last 64 KB), counts it, and returns the error that stops the step; the caller's catch ends the
+     * boot. The user reads the error: plainly that iOS stopped, that Resume boots it again, and from the third
+     * identical stall that a report helps.
+     */
+    private static IOException stalled(Context c, File serial, MigrationWatch watch, MigrationWatch.Verdict v, long now, long min, int frames) {
+        long silent = watch.silentMin(now);
+        String kind = v == MigrationWatch.Verdict.STALL_CHURN ? "churn" : v == MigrationWatch.Verdict.STALL_DEAD ? "dead" : "silent";
+        File stalls = new File(work(c), "phone/stalls.txt");
+        StallHistory h = StallHistory.load(stalls);
+        int n = h.record("wallpaper", kind);
+        h.save(stalls);
+        File logs = new File(work(c), "phone/logs");
+        logs.mkdirs();
+        File err = new File(Guest.runDir(c), "qemu-stderr.txt");
+        SetupTick.slice(serial, Math.max(0, serial.length() - SetupTick.SLICE), SetupTick.SLICE, new File(logs, "wallpaper-serial-stall-" + n + ".txt"));
+        SetupTick.slice(err, Math.max(0, err.length() - SetupTick.SLICE), SetupTick.SLICE, new File(logs, "wallpaper-stderr-stall-" + n + ".txt"));
+        AppLog.note(c, "setup26: stall " + n + " (" + kind + ") at minute " + min + ": shell silent " + silent + " min, console pid max "
+                + watch.maxPid() + ", frames " + frames + "; the last 64 KB of console and QEMU's stderr are in phone/logs (wallpaper-*-stall-" + n + ".txt)");
+        return new IOException(StallHistory.userText(MigrationWatch.stallText(v, silent), n));
     }
 
     // -- packing into the app ------------------------------------------------------------------------------------

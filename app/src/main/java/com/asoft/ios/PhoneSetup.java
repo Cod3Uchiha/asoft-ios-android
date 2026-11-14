@@ -202,6 +202,7 @@ final class PhoneSetup {
         Guest.startError = null;
         Guest.start(c, null);
         boolean offSeen = false, up = false;
+        FirstStartWatch watch = new FirstStartWatch(t0);
         long at = 0;
         StringBuilder carry = new StringBuilder();
         try {
@@ -214,16 +215,25 @@ final class PhoneSetup {
                 if (s > 20 && !Guest.running() && !"booting".equals(Guest.state)) {
                     throw new IOException("iOS stopped during its first start (" + Guest.startError + ")");
                 }
-                if (s > 120 * 60) {
-                    throw new IOException("iOS did not finish its first start in 2 hours");
+                long nowMs = System.currentTimeMillis();
+                FirstStartWatch.Verdict v = watch.verdict(nowMs);
+                if (v != FirstStartWatch.Verdict.WAIT) {
+                    // (2026-11-13: two phones were still printing new lines at the old 2 h limit and lost the hours)
+                    String why = watch.giveUpText(v, nowMs);
+                    AppLog.note(c, "setup: first start gives up (" + v + "): " + why);
+                    end(c);                         // what it did so far stays in a save, as when the user stops it
+                    throw new IOException(why);
                 }
+                String chunk = "";
+                boolean milestone = false;
                 if (serial.isFile() && serial.length() > at) {
                     try (java.io.RandomAccessFile f = new java.io.RandomAccessFile(serial, "r")) {
                         f.seek(at);
                         byte[] b = new byte[(int) Math.min(1 << 20, f.length() - at)];
                         f.readFully(b);
                         at += b.length;
-                        carry.append(new String(b, StandardCharsets.ISO_8859_1));
+                        chunk = new String(b, StandardCharsets.ISO_8859_1);
+                        carry.append(chunk);
                     }
                     int nl;
                     while ((nl = carry.indexOf("\n")) >= 0) {
@@ -231,14 +241,16 @@ final class PhoneSetup {
                         carry.delete(0, nl + 1);
                         if (line.contains("SWEET FB: display off")) {
                             offSeen = true;
+                            milestone = true;
                         } else if (offSeen && line.contains("SWEET FB: display on")) {
                             up = true;
+                            milestone = true;
                         }
                     }
                 }
-                // 38 min on the S25 (PC 21): the bar fills toward that and waits at 95
-                p.step("firststart", (int) Math.min(95, s * 100 / (40 * 60)),
-                        String.format(java.util.Locale.ROOT, "iOS is setting itself up (%d min of about 40)", s / 60));
+                watch.observe(nowMs, chunk, milestone);
+                // 38 min on the S25 (PC 21): the bar fills toward that and waits at 95; the text says what is really going on
+                p.step("firststart", (int) Math.min(95, s * 100 / (40 * 60)), watch.status(nowMs));
                 Thread.sleep(2000);
             }
             p.step("firststart", 97, "iOS is up; saving it");
