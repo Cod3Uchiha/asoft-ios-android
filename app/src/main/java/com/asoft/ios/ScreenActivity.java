@@ -730,6 +730,18 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
 
     static final String COMPAT_TEXT = "This is a known issue on this GPU (Adreno 750 and others without sparse binds from host memory)."
             + " If you want to help fix it, write on Reddit (r/hackios) or open an issue on GitHub.";
+    /** Where a stop on the phone's own Vulkan driver (GpuCheck.systemDriver, experimental) is told. */
+    static final String SYSTEM_ISSUES = "https://github.com/alpersamur3/asoft-ios-android/issues";
+
+    static final String SYSTEM_TEXT = "iOS 26 and watchOS run on this phone's own graphics driver here, which is experimental:"
+            + " we could not test it on this GPU. Please send the report, or open an issue on GitHub with the log"
+            + " (Logs on the home screen): it shows us what this driver needs.";
+
+    /** What a stop in the compatibility mode adds: the own driver's words when the guest ran on it (Guest.system26). */
+    static String compatText(boolean system) {
+        return system ? SYSTEM_TEXT : COMPAT_TEXT;
+    }
+
     /** How long a stop in the compatibility mode waits for its crash record before the notice shows alone. */
     private static final long COMPAT_WAIT_MS = 6000;
     /** When the guest's end in the compatibility mode was seen (Guest.endedInCompatMode); 0: none waits. */
@@ -742,16 +754,19 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
      * says this (CrashReport.show with COMPAT_TEXT), so that one stop shows one dialog.
      */
     private void compatNotice(String name) {
-        AppLog.note(this, "gpu: " + name + " stopped in the compatibility mode: notice shown");
+        boolean sys = Guest.system26;
+        String link = sys ? SYSTEM_ISSUES : COMPAT_ISSUE;
+        AppLog.note(this, "gpu: " + name + " stopped in the compatibility mode" + (sys ? " (the phone's own driver)" : "")
+                + ": notice shown");
         new android.app.AlertDialog.Builder(this)
                 .setTitle(name + " stopped")
-                .setMessage(COMPAT_TEXT)
-                .setPositiveButton("Open the GitHub issue", (d, w) -> {
+                .setMessage(compatText(sys))
+                .setPositiveButton(sys ? "Open GitHub" : "Open the GitHub issue", (d, w) -> {
                     try {
                         startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse(COMPAT_ISSUE)));
+                                android.net.Uri.parse(link)));
                     } catch (android.content.ActivityNotFoundException e) {
-                        toast(COMPAT_ISSUE);
+                        toast(link);
                     }
                 })
                 .setNegativeButton("Close", null)
@@ -1079,8 +1094,9 @@ public class ScreenActivity extends Activity implements SurfaceHolder.Callback, 
                 if (compatSince > 0 && (cr != null || now - compatSince > COMPAT_WAIT_MS)) {
                     compatSince = 0;
                     if (cr != null) {
-                        AppLog.note(this, "gpu: " + name + " stopped in the compatibility mode: crash report shown");
-                        CrashReport.show(this, cr, COMPAT_TEXT);
+                        AppLog.note(this, "gpu: " + name + " stopped in the compatibility mode"
+                                + (Guest.system26 ? " (the phone's own driver)" : "") + ": crash report shown");
+                        CrashReport.show(this, cr, compatText(Guest.system26));
                     } else {
                         compatNotice(name);
                     }

@@ -427,6 +427,50 @@ public class CrashTextTest {
                 CrashText.cause(null, ev, 6));
     }
 
+    /** What the engine prints at every start, and in its census: both name the limit, neither says it was reached. */
+    private static final String MAPPINGS_WARNING = "reims[warn] reims_vgpu_vulkan::os: vm.max_map_count is 65530: views of guest"
+            + " memory end the process past 49146 mappings, about 767 MiB of the guest's 4133 MiB in 16 KiB pieces;"
+            + " `sysctl -w vm.max_map_count=1048576` or more lets them cover it";
+    private static final String CENSUS = "reims[info] reims_vgpu_vulkan::os: reims-vgpu: views census: held 3 of budget 49146"
+            + " (vm.max_map_count 65530); aliases 0";
+    /** The phone's own driver without the host import (Qualcomm's, 2026-11-15). */
+    private static final String FATAL_HOST = "reims-vgpu: fatal: platform call newBufferWithBytesNoCopy:length:options:deallocator::"
+            + " the Vulkan runtime refused it: unsupported: Unsupported { feature: HostMemory, needs:"
+            + " AnyOf([[Extension(ExtExternalMemoryHost)]]), location: None, symbol: None }";
+
+    @Test
+    public void namingTheMappingLimitIsNotReachingIt() {
+        assertFalse(CrashText.mappingsRanOut(MAPPINGS_WARNING));
+        assertFalse(CrashText.mappingsRanOut(CENSUS));
+        assertTrue(CrashText.mappingsRanOut(MAPPINGS_FATAL));
+        assertTrue(CrashText.mappingsRanOut("reims-vgpu: fatal: platform call mmap: the process ran out of kernel mappings: the"
+                + " kernel refused a view (ENOMEM) with 65529 of vm.max_map_count 65530 held"));
+        // a map the kernel refused short of the limit is a lack of memory, not of mappings
+        assertFalse(CrashText.mappingsRanOut("reims[error] reims_vgpu_vulkan::os: a view: the kernel refused the map (ENOMEM):"
+                + " the process has 4100 mappings, vm.max_map_count is 65530"));
+        // a run that ended in its first seconds on a save this host could not load (record 20261115-191907)
+        List<String> ev = Arrays.asList(MAPPINGS_WARNING, CENSUS,
+                "qemu: resume refused: this host lacks what the suspended guest asked for");
+        assertEquals("QEMU ended with exit code 1", CrashText.cause(null, ev, 1 << 8));
+        // ...and one the engine ended for another reason says that reason
+        List<String> host = Arrays.asList(MAPPINGS_WARNING, CENSUS, FATAL_HOST);
+        String cause = CrashText.cause(CrashText.fatalLine(host), host, 6);
+        assertTrue(cause, cause.startsWith("platform call newBufferWithBytesNoCopy"));
+    }
+
+    @Test
+    public void graphicsStopSaysTheMappingLimitOnlyWhenItWasReached() {
+        String start = MAPPINGS_WARNING + "\n" + CENSUS + "\n";
+        assertNull(CrashText.graphicsStop(start + "qemu: resume refused: this host lacks what the suspended guest asked for\n", ""));
+        String other = CrashText.graphicsStop(start + FATAL_HOST + "\n", "");
+        assertTrue(other, other.startsWith("its graphics asked the phone's GPU for something"));
+        String full = CrashText.graphicsStop(start + MAPPINGS_FATAL + "\n", "");
+        assertTrue(full, full.contains("65,530 memory mappings"));
+        // the last error line alone may carry it (a stderr longer than the tail read)
+        assertTrue(CrashText.graphicsStop("", MAPPINGS_FATAL).contains("65,530 memory mappings"));
+        assertNull(CrashText.graphicsStop("", ""));
+    }
+
     @Test
     public void singleOverLongNotableLineIsShortenedNotDropped() {
         String longWarn = "reims[warn] " + "a very long warning that goes on and on ".repeat(60);

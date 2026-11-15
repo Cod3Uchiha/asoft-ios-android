@@ -1714,27 +1714,14 @@ final class Guest {
                     + " then start it again: its disk and saves are kept.", c.getFilesDir().getUsableSpace() / 1e9);
         }
         String why = lastWords(c);
-        // before the generic reims fatal below: running out of mappings is itself a "reims-vgpu: fatal" line
-        // ("platform call mmap: the library's views of memory ran out of kernel mappings ... max_map_count")
-        boolean mappings = tail.contains("max_map_count") || tail.contains("kernel mappings")
-                || why.contains("max_map_count") || why.contains("kernel mappings");
-        if (!mappings && tail.contains("reims-vgpu: fatal")) {
-            // metal2vulkan met something it does not translate yet (2026-11-07: a compute kernel's texture
-            // format on the watch) and reims ends QEMU rather than draw wrong
-            return "its graphics asked the phone's GPU for something this version cannot do yet. Start it again:"
-                    + " its disk and saves are kept.";
-        }
-        if (mappings) {
-            // reims' views of iOS's graphics memory take a mapping per 16 KiB page: Android allows an app
-            // 65,530 (APK-PLAN §6.19)
-            return "its graphics memory used up the 65,530 memory mappings Android gives an app (a known limit"
-                    + " of this version). Start it again; the 2x screen (iOS 26's menu on the home screen) needs fewer.";
-        }
-        return why;
+        String gpu = CrashText.graphicsStop(tail, why);
+        return gpu != null ? gpu : why;
     }
 
     /** The last iOS 26 or watchOS QEMU started in the GPU's compatibility mode (start26, GpuCheck.noSparse). */
     static volatile boolean compat26;
+    /** ...on the phone's own Vulkan driver (GpuCheck.systemDriver, experimental): its stops have their own words. */
+    static volatile boolean system26;
     /** ...and it was one of the setup's own boots, whose failures the setup reports itself. */
     private static volatile boolean compatSetupRun;
     /** The QEMU whose end in that mode the screen has told of (once per QEMU). */
@@ -2315,6 +2302,7 @@ final class Guest {
         // (an ios26.txt env.REIMS_VGPU_DEFERRED_VIEWS=1 of a test turns it back on: then it is no compatibility mode)
         compat26 = noSparse && "0".equals(env.get("REIMS_VGPU_DEFERRED_VIEWS"));
         compatSetupRun = sb != null;
+        system26 = sys;
         if (compat26) {
             AppLog.note(c, "gpu: compatibility mode (no sparse binds from host memory)");
         }

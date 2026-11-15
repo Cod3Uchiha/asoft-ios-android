@@ -557,6 +557,40 @@ final class CrashText {
         return value == null || value.trim().isEmpty() ? "not set" : value.trim();
     }
 
+    /**
+     * The engine's own words for Android's mapping limit reached: "the library's views of memory ran out of kernel
+     * mappings" at its budget and "the process ran out of kernel mappings" at the kernel's refusal. Not every line
+     * that names vm.max_map_count: the engine warns of the limit at each start ("vm.max_map_count is 65530: views
+     * of guest memory end the process past 49146 mappings") and its census lines carry it, so a run that ended
+     * for another reason in its first minutes was told as this one (2026-11-15).
+     */
+    static boolean mappingsRanOut(String text) {
+        return text.contains("ran out of kernel mappings");
+    }
+
+    /**
+     * Guest.stopReason's sentence for a stop of the GPU layer, from the end of QEMU's stderr (@tail) and its last error
+     * line (@why); null when the GPU layer did not end it.
+     */
+    static String graphicsStop(String tail, String why) {
+        // before the generic reims fatal below: running out of mappings is itself a "reims-vgpu: fatal" line
+        // ("platform call mmap: the library's views of memory ran out of kernel mappings ... max_map_count").
+        // Only those words: the engine names vm.max_map_count at every start (mappingsRanOut)
+        if (mappingsRanOut(tail) || mappingsRanOut(why)) {
+            // reims' views of iOS's graphics memory take a mapping per 16 KiB page: Android allows an app
+            // 65,530 (APK-PLAN §6.19)
+            return "its graphics memory used up the 65,530 memory mappings Android gives an app (a known limit"
+                    + " of this version). Start it again; the 2x screen (iOS 26's menu on the home screen) needs fewer.";
+        }
+        if (tail.contains("reims-vgpu: fatal")) {
+            // metal2vulkan met something it does not translate yet (2026-11-07: a compute kernel's texture
+            // format on the watch) and reims ends QEMU rather than draw wrong
+            return "its graphics asked the phone's GPU for something this version cannot do yet. Start it again:"
+                    + " its disk and saves are kept.";
+        }
+        return null;
+    }
+
     /** cause() for a phone of @sdk whose run's lowest sampled MemAvailable was @lowestAvailKb (-1: none). */
     static String cause(String fatal, List<String> tailLines, int raw, int sdk, long lowestAvailKb) {
         if (fatal != null) {
@@ -588,7 +622,7 @@ final class CrashText {
         boolean full = false, mappings = false;
         for (String l : lines) {
             full |= l.contains("No space left on device") || l.contains("ENOSPC");
-            mappings |= l.contains("max_map_count") || l.contains("kernel mappings");
+            mappings |= mappingsRanOut(l);
         }
         if (full) {
             return "the phone's storage was full";
