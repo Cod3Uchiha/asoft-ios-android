@@ -434,6 +434,13 @@ static int import_host(void *host, size_t size, uint32_t want_bits, VkDeviceMemo
     }
     host_import_type = t;
     say("host import: memory type %u, flags %#x", t, mp.memoryTypes[t].propertyFlags);
+    if (!(mp.memoryTypes[t].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+        /* The engine imports the guest's RAM the same way and does no cache sync yet, so GpuCheck.java turns
+         * this line into a lack of its own: a pass here would start iOS 26 on stale reads and writes. The
+         * text up to "sync" is matched exactly there. */
+        say("host import: not coherent: the CPU and the GPU see each other's writes only after a cache sync (flags %#x)",
+            mp.memoryTypes[t].propertyFlags);
+    }
     VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
                                             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, .pHostPointer = host};
     VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = size, .memoryTypeIndex = t};
@@ -564,6 +571,23 @@ static int sparse_import(uint32_t want_bits)
         munmap(sparse_host, SPARSE_BIG);
         sparse_host = NULL;
         return 0;
+    }
+    if (!(mp.memoryTypes[host_import_type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+        /* The pattern above sits in the CPU's cache on a non-coherent type: flush it so the GPU's copy reads
+         * it, not what was in the pages before (the gather would be reported wrong for that reason alone). The
+         * copy only reads the import, so nothing needs invalidating. A failure here is not fatal: the
+         * comparison then says what it sees. */
+        DFN(vkMapMemory);
+        DFN(vkUnmapMemory);
+        DFN(vkFlushMappedMemoryRanges);
+        void *mapped = NULL;
+        VkMappedMemoryRange range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .memory = sparse_mem, .offset = 0,
+                                     .size = VK_WHOLE_SIZE};
+        if (vkMapMemory && vkUnmapMemory && vkFlushMappedMemoryRanges
+            && vkMapMemory(dev, sparse_mem, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS) {
+            vkFlushMappedMemoryRanges(dev, 1, &range);
+            vkUnmapMemory(dev, sparse_mem);
+        }
     }
     return 1;
 }

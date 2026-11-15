@@ -168,6 +168,9 @@ final class GpuCheck {
 
     /** {@link #fallbackPass} for the lines of one Turnip log (gpucheck.c's "lacks:", "test:" and "missing:" lines). */
     static boolean fallbackPassOfLog(List<String> turnipLines) {
+        if (hostCacheLack(turnipLines) != null) {
+            return false;       // stale reads and writes are not what the compatibility mode works around
+        }
         List<String> lacks = new ArrayList<>(), tests = new ArrayList<>();
         boolean probeEnded = false;
         for (String l : turnipLines) {
@@ -215,12 +218,38 @@ final class GpuCheck {
         return noRaster && noInterlock ? FRAMEBUFFER_FETCH : null;
     }
 
+    /** The line gpucheck.c writes when the host import's memory type is not coherent (the flags follow it). */
+    static final String HOST_NOT_COHERENT = "host import: not coherent: the CPU and the GPU see each other's writes only after a cache sync";
+
+    /** What a driver with a cached, non-coherent host import lacks: the engine imports the guest's RAM the same way and does no cache syncs yet. */
+    static final String HOST_CACHE_SYNC = "memory shared between the phone and the GPU that stays in step by itself: this driver's needs a sync"
+            + " at every use (its host import is cached, not coherent), which the engine does not do yet";
+
+    /**
+     * {@link #HOST_CACHE_SYNC} when the log of the driver that decides (Turnip's on an Adreno, else the phone's own)
+     * has the {@link #HOST_NOT_COHERENT} line, else null. The probe passes such a driver (it does the syncs itself),
+     * but iOS 26 would read and write stale data on it, so it must not count as a pass.
+     */
+    static String hostCacheLack(List<String> lines) {
+        for (String l : lines) {
+            if (l.startsWith(HOST_NOT_COHERENT)) {
+                return HOST_CACHE_SYNC;
+            }
+        }
+        return null;
+    }
+
+    /** The probe's own pass, unless the host import needs cache syncs the engine does not do ({@link #hostCacheLack}). */
+    static boolean passes(boolean probePass, List<String> decidingLines) {
+        return probePass && hostCacheLack(decidingLines) == null;
+    }
+
     /**
      * Sorts a failed check: will not run here (the phone's driver fails the basic tests, has no Vulkan 1.2 or no
      * descriptor indexing, or the phone has too little RAM), or not supported yet (it lacks only what our side could
      * add: host-memory import, sparse binding; or Turnip, ours, fails on an Adreno).
      */
-    private static void judge(Context c, Result r, List<String> sysLines, boolean adrenoGpu) {
+    private static void judge(Context c, Result r, List<String> sysLines, boolean adrenoGpu, String cacheLack) {
         r.ram = ram(c);
         if (!Guest.nativeMissing().isEmpty()) {
             r.slow = "The CPU lacks what the fast engine needs (" + Guest.nativeMissing() + "): it would run very slowly.";
@@ -228,6 +257,11 @@ final class GpuCheck {
         if (r.pass) {
             return;
         }
+        sort(r, sysLines, adrenoGpu, cacheLack);
+    }
+
+    /** The reasons of a failed check (@cacheLack: {@link #hostCacheLack} of the deciding log, or null); no Context needed. */
+    static void sort(Result r, List<String> sysLines, boolean adrenoGpu, String cacheLack) {
         List<String> never = new ArrayList<>(), later = new ArrayList<>(), other = new ArrayList<>();
         boolean compute = false, render = false, ended = false, sawDevice = false;
         String api = "";
@@ -261,6 +295,9 @@ final class GpuCheck {
             r.never = false;
             r.why.add("the app's Turnip driver does not run iOS 26 on this Adreno yet");
             r.why.addAll(r.missing);
+            if (cacheLack != null && !r.why.contains(cacheLack)) {
+                r.why.add(cacheLack);
+            }
             return;
         }
         if (!ended || !sawDevice) {
@@ -292,6 +329,10 @@ final class GpuCheck {
         String fetch = framebufferFetchLack(sysLines);
         if (fetch != null && !r.never && !r.why.contains(fetch)) {
             r.why.add(fetch);
+        }
+        // the same for a driver whose host import needs cache syncs: it passes the probe, the engine would not
+        if (cacheLack != null && !r.never && !r.why.contains(cacheLack)) {
+            r.why.add(cacheLack);
         }
     }
 
@@ -516,12 +557,15 @@ final class GpuCheck {
                 rep.append("(cannot read: ").append(e.getMessage()).append(")\n");
             }
         }
-        if (r.ran && !r.pass && adreno() && !turnipOff(c) && fallbackPassOfLog(turnipLines)) {
+        boolean turnipDecides = adreno() && !turnipOff(c);
+        String cacheLack = hostCacheLack(turnipDecides ? turnipLines : sysLines);
+        r.pass = passes(r.pass, turnipDecides ? turnipLines : sysLines);
+        if (r.ran && !r.pass && turnipDecides && fallbackPassOfLog(turnipLines)) {
             r.pass = true;
             r.nosparse = true;
         }
         if (r.ran) {
-            judge(c, r, sysLines, adreno() && !turnipOff(c));
+            judge(c, r, sysLines, turnipDecides, cacheLack);
             rep.append("\n== verdict\n");
             rep.append(String.format(Locale.ROOT, "ram: %.2f GB (a warning below %.1f for iOS 26, %.1f for watchOS; guest memory iOS 26 %d MiB, watchOS %d MiB)%n",
                     r.ram / 1e9, RAM_IOS26 / 1e9, RAM_WATCH / 1e9, Guest.ramMiB(c, Guest.IOS26), Guest.ramMiB(c, Guest.WATCH)));
