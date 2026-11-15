@@ -10,6 +10,14 @@
       "note": "Galaxy S25 Ultra"
     },
     {
+      "soc": "SM8850",
+      "gpu": "Adreno (TM) 840",
+      "os": ["ios26"],
+      "state": "works",
+      "phone": "Xiaomi 25102PCBEG",
+      "note": "one report: ran 10 min at the 2x screen, up to 46 fps; iOS 16 and watchOS not reported yet"
+    },
+    {
       "soc": "",
       "gpu": "Mali",
       "os": ["ios26", "watch"],

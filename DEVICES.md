@@ -6,6 +6,7 @@ same list in words.
 | Phone | SoC | GPU | iOS 26 | iOS 16 | watchOS | Note |
 | --- | --- | --- | --- | --- | --- | --- |
 | Samsung SM-S938B (Galaxy S25 Ultra) | SM8750 | Adreno 830 | works | works | works | Galaxy S25 Ultra |
+| Xiaomi 25102PCBEG | SM8850 | Adreno 840 | works | not reported | not reported | One report: ran 10 minutes at the 2x screen, up to 46 fps. |
 | any phone with an ARM Mali GPU | any | Mali | fails | no GPU needed | fails | Most fail the GPU check (no VK_EXT_external_memory_host); one that passes runs, slowly so far. |
 | any phone with an Imagination PowerVR GPU | any | PowerVR | fails | no GPU needed | fails | The GPU check fails (no VK_EXT_external_memory_host); not supported yet. |
 | any phone with a Samsung Xclipse GPU | any | Xclipse | fails | no GPU needed | fails | The GPU check fails or the picture is wrong; not supported yet. |
