@@ -18,14 +18,19 @@ import java.util.Locale;
  * GpuCheckService (gpucheck.c: the device, its extensions and features, a compute dispatch, a render pass,
  * a buffer over host memory and sparse binds from host memory); a pass is remembered for this build of
  * the app and its Turnip. When Turnip fails, or the phone has no Adreno (Turnip drives Adreno GPUs only),
- * the phone's own Vulkan driver is probed too, for the log: what it lacks is what support for it
- * (Mali, say) would need. iOS 16 does not use the GPU and is not gated.
+ * the phone's own Vulkan driver is probed too: for the log, and on a phone without an Adreno it can decide
+ * (see the third outcome below). iOS 16 does not use the GPU and is not gated.
  * <p>
  * A Turnip that lacks only sparse binds from host memory (Adreno 750, 2026-11: the binds are accepted but read
  * back zeros) passes in a compatibility mode ({@link #FALLBACK_COVERS}, {@link #noSparse}): iOS 26 and watchOS
  * then start with reims' deferred views off (REIMS_VGPU_DEFERRED_VIEWS=0, Guest.start26), the older path that
  * imports the guest's RAM by pointer and binds nothing sparse from it. Its cost: a mapping per view, so a long
  * run can reach Android's 65,530 and QEMU ends (AutoSave saves before that when it can).
+ * <p>
+ * The third outcome is experimental and only for a phone without an Adreno ({@link #systemPassOfLog}): its own
+ * driver passed the probe, so iOS 26 and watchOS start on that driver (Android's Vulkan loader, not the app's
+ * Turnip and loader; {@link Emu#linkLibrariesSystem}) in the compatibility mode ({@link Result#system},
+ * {@link #systemDriver}). We have not run this on such a phone ourselves (a user's Mali-G1-Ultra booted iOS 26 this way).
  */
 final class GpuCheck {
     private GpuCheck() {}
@@ -99,11 +104,28 @@ final class GpuCheck {
         return passed(c) && key(c).equals(c.getSharedPreferences("setup", Context.MODE_PRIVATE).getString("gpucheck-nosparse", ""));
     }
 
+    /**
+     * The pass for this build is on the phone's own Vulkan driver (experimental, always with the compatibility mode:
+     * {@link #noSparse} is true too). Keyed like the pass. Debug builds can force it, to see on an Adreno phone that
+     * the engine opens Android's Vulkan loader (adb: run-as PACKAGE touch files/gpucheck-force-system, with a passed
+     * check; rm it to go back).
+     */
+    static boolean systemDriver(Context c) {
+        if (!passed(c)) {
+            return false;
+        }
+        boolean debug = (c.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        return key(c).equals(c.getSharedPreferences("setup", Context.MODE_PRIVATE).getString("gpucheck-system", ""))
+                || debug && new File(c.getFilesDir(), "gpucheck-force-system").exists();
+    }
+
     /** The last check's outcome, for the screen. */
     static final class Result {
         boolean pass;
         /** A pass in the compatibility mode: Turnip lacks only what {@link #FALLBACK_COVERS} lists. */
         boolean nosparse;
+        /** A pass on the phone's own Vulkan driver (experimental); {@link #pass} and {@link #nosparse} are set too. */
+        boolean system;
         boolean ran;
         String summary = "";            // one line for people
         final List<String> missing = new ArrayList<>();
@@ -183,6 +205,39 @@ final class GpuCheck {
             }
         }
         return fallbackPass(lacks, tests, probeEnded);
+    }
+
+    /**
+     * Whether the phone's own driver's log (gpucheck.c's lines) earns the experimental pass on that driver: the probe
+     * ended by itself (a "result: pass" or "missing:" line; not through once()'s crash or timeout lines), the driver
+     * made a device and its compute and render results are right, the tests compute, render and host memory ran
+     * (each writes a lack of its own when it fails), every lack is one the compatibility mode runs without, and the
+     * driver can fetch the framebuffer ({@link #framebufferFetchLack}). A non-coherent host import does not stop it:
+     * the probe did its cache syncs, the engine does none, which is why the route is experimental.
+     */
+    static boolean systemPassOfLog(List<String> sysLines) {
+        List<String> lacks = new ArrayList<>(), tests = new ArrayList<>();
+        boolean compute = false, render = false, ended = false, sawDevice = false;
+        for (String l : sysLines) {
+            if (l.startsWith("error: the probe's process ended without a result") || l.startsWith("error: no result in ")) {
+                return false;
+            } else if (l.startsWith("compute: ")) {
+                compute = l.startsWith("compute: 0 of ");
+            } else if (l.startsWith("render: ")) {
+                render = l.startsWith("render: 0 of ");
+            } else if (l.equals("device: vkCreateDevice VkResult 0")) {
+                sawDevice = true;       // (the probe writes the line for a failed vkCreateDevice too, with its VkResult)
+            } else if (l.equals("result: pass") || l.startsWith("missing: ")) {
+                ended = true;
+            } else if (l.startsWith("lacks: ")) {
+                lacks.add(l.substring(7));
+            } else if (l.startsWith("test: ")) {
+                tests.add(l.substring(6));
+            }
+        }
+        return ended && sawDevice && compute && render && FALLBACK_COVERS.containsAll(lacks)
+                && tests.containsAll(java.util.Arrays.asList("compute", "render", "host memory"))
+                && framebufferFetchLack(sysLines) == null;
     }
 
     /** A lack that rules this phone out with its current driver, in plain words, or null. */
@@ -368,8 +423,10 @@ final class GpuCheck {
             }
             Result r = last(c);
             c.getSharedPreferences("setup", Context.MODE_PRIVATE).edit().putString("gpucheck-pass", r.pass ? key(c) : "")
-                    .putString("gpucheck-nosparse", r.nosparse ? key(c) : "").apply();
-            AppLog.note(c, "gpu check: " + (r.nosparse ? "pass in the compatibility mode (no " + SPARSE_HOST + ")"
+                    .putString("gpucheck-nosparse", r.nosparse ? key(c) : "")
+                    .putString("gpucheck-system", r.system ? key(c) : "").apply();
+            AppLog.note(c, "gpu check: " + (r.system ? "pass on the phone's own driver (experimental, compatibility mode)"
+                    : r.nosparse ? "pass in the compatibility mode (no " + SPARSE_HOST + ")"
                     : r.pass ? "pass" : (r.never ? "will not run here: " : "not supported yet: ") + String.join("; ", r.why))
                     + " (turnip " + turnipEnd + ")");
             return r;
@@ -519,7 +576,7 @@ final class GpuCheck {
         rep.append("cpu: ").append(Build.SUPPORTED_ABIS[0]).append(", ").append(Runtime.getRuntime().availableProcessors())
                 .append(" cores; native engine needs: ").append(Guest.nativeMissing().isEmpty() ? "all there" : Guest.nativeMissing()).append('\n');
         rep.append("date: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.ROOT).format(new java.util.Date())).append('\n');
-        String gpu = "", driver = "";
+        String gpu = "", driver = "", sysDriver = "";
         List<String> sysLines = new ArrayList<>();
         // Turnip's own log lines, for the compatibility mode (fallbackPassOfLog)
         List<String> turnipLines = new ArrayList<>();
@@ -529,7 +586,8 @@ final class GpuCheck {
                 continue;
             }
             r.ran = true;
-            rep.append("\n== ").append("turnip".equals(which) ? "the app's Turnip driver (what iOS 26 uses)" : "the phone's own Vulkan driver (for the log)").append('\n');
+            rep.append("\n== ").append("turnip".equals(which) ? "the app's Turnip driver (what iOS 26 uses)" : "the phone's own Vulkan driver ("
+                    + (adreno() ? "for the log" : "it decides on a phone without an Adreno") + ")").append('\n');
             try {
                 for (String l : Files.readAllLines(log.toPath())) {
                     rep.append(l).append('\n');
@@ -537,6 +595,8 @@ final class GpuCheck {
                         sysLines.add(l);
                         if (l.startsWith("gpu: ") && gpu.isEmpty()) {
                             gpu = l.substring(5);
+                        } else if (l.startsWith("driver: ") && sysDriver.isEmpty()) {
+                            sysDriver = l.substring(8);
                         }
                         continue;
                     }
@@ -564,15 +624,27 @@ final class GpuCheck {
             r.pass = true;
             r.nosparse = true;
         }
+        if (r.ran && !r.pass && !adreno() && systemPassOfLog(sysLines)) {
+            // no Adreno, so no Turnip: the phone's own driver passed (experimental, in the compatibility mode)
+            r.pass = true;
+            r.nosparse = true;
+            r.system = true;
+            // the driver that runs iOS 26 here, named as such for the screen and the "works" report
+            driver = (sysDriver.isEmpty() ? "" : sysDriver + " ") + "(the phone's own driver)";
+        }
         if (r.ran) {
             judge(c, r, sysLines, turnipDecides, cacheLack);
             rep.append("\n== verdict\n");
             rep.append(String.format(Locale.ROOT, "ram: %.2f GB (a warning below %.1f for iOS 26, %.1f for watchOS; guest memory iOS 26 %d MiB, watchOS %d MiB)%n",
                     r.ram / 1e9, RAM_IOS26 / 1e9, RAM_WATCH / 1e9, Guest.ramMiB(c, Guest.IOS26), Guest.ramMiB(c, Guest.WATCH)));
-            rep.append("result: ").append(r.nosparse ? "supported in the compatibility mode (no " + SPARSE_HOST
+            rep.append("result: ").append(r.system ? "supported, experimental: the phone's own Vulkan driver in the compatibility mode"
+                    + " (not tested by us on this GPU)" : r.nosparse ? "supported in the compatibility mode (no " + SPARSE_HOST
                     + ": reims' deferred views off, REIMS_VGPU_DEFERRED_VIEWS=0)"
                     : r.pass ? "supported" : r.never ? "will not run on this phone (with its current driver)" : "not supported yet")
                     .append('\n');
+            if (r.system && cacheLack != null) {
+                rep.append("note: this driver's shared memory needs cache syncs that the engine does not do, so wrong pictures are possible\n");
+            }
             for (String w : r.why) {
                 rep.append("needs: ").append(w).append('\n');
             }
@@ -584,7 +656,9 @@ final class GpuCheck {
         r.gpu = gpu;
         r.driver = driver;
         String name = gpu.isEmpty() ? "" : " (" + gpu + ")";
-        r.summary = r.pass ? "Your GPU" + name + " can run iOS 26 and watchOS." + (driver.isEmpty() ? "" : " Driver: " + driver)
+        r.summary = r.system ? "Your GPU" + name + " can run iOS 26 and watchOS on the phone's own graphics driver (experimental)."
+                + (driver.isEmpty() ? "" : " Driver: " + driver)
+                : r.pass ? "Your GPU" + name + " can run iOS 26 and watchOS." + (driver.isEmpty() ? "" : " Driver: " + driver)
                 : r.never ? "iOS 26 and watchOS will not run on this phone" + name + " with its current graphics driver."
                 : "This phone's GPU" + name + " is not supported yet.";
         return r;

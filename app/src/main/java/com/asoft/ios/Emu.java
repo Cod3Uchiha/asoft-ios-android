@@ -9,7 +9,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /** Where QEMU and its libraries are, and how to start it. */
 final class Emu {
@@ -20,7 +24,21 @@ final class Emu {
      * lib_libz.so.1.so. The loader looks for the soname: give it a directory of links.
      */
     static File linkLibraries(Context c) throws IOException {
-        File links = new File(c.getFilesDir(), "lib");
+        return links(c, "lib", Collections.emptySet());
+    }
+
+    /**
+     * The same links without the app's Vulkan loader and Turnip (files/lib-system): an engine that dlopens
+     * "libvulkan.so" with this folder as its library path gets Android's loader and the phone's own driver
+     * (iOS 26 on a phone without an Adreno whose driver passed the check, GpuCheck.systemDriver).
+     */
+    static File linkLibrariesSystem(Context c) throws IOException {
+        return links(c, "lib-system", new HashSet<>(Arrays.asList("libvulkan.so", "libvulkan_freedreno.so")));
+    }
+
+    /** @skip: link names left out; a link of such a name from an earlier run is removed. */
+    private static File links(Context c, String folder, Set<String> skip) throws IOException {
+        File links = new File(c.getFilesDir(), folder);
         if (!links.isDirectory() && !links.mkdirs()) {
             throw new IOException("cannot create " + links);
         }
@@ -34,6 +52,10 @@ final class Emu {
                 continue;
             }
             File link = new File(links, n.substring(4, n.length() - 3));
+            if (skip.contains(link.getName())) {
+                link.delete();
+                continue;
+            }
             try {
                 if (f.getPath().equals(Os.readlink(link.getPath()))) {
                     continue;       // as it was: a QEMU starting now finds every link

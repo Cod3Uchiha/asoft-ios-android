@@ -2264,8 +2264,19 @@ final class Guest {
         }
         Map<String, String> env = new java.util.HashMap<>(System.getenv());
         Emu.baseEnv(c, links, env);
+        // A pass on the phone's own Vulkan driver (GpuCheck.systemDriver, experimental): the engine's library path has
+        // no app loader and no Turnip, so its dlopen("libvulkan.so") gets Android's loader, and no driver file is set
+        boolean sys = GpuCheck.systemDriver(c);
+        if (sys) {
+            env.put("LD_LIBRARY_PATH", Emu.linkLibrariesSystem(c).getPath());
+            env.remove("VK_DRIVER_FILES");
+            env.remove("VK_ICD_FILENAMES");
+            env.remove("VK_ADD_DRIVER_FILES");
+        }
         env.put("ASOFT_FRAME_FD", String.valueOf(frameFd));
-        env.put("VK_DRIVER_FILES", icd.getPath());
+        if (!sys) {
+            env.put("VK_DRIVER_FILES", icd.getPath());
+        }
         env.put("REIMS_VGPU_LOG", "info");
         env.put("RUST_BACKTRACE", "1");
         env.put("ASOFT_PAGE_BITS", "14");
@@ -2292,7 +2303,7 @@ final class Guest {
         // A GPU check passed in the compatibility mode (GpuCheck.noSparse: Turnip's sparse binds from host memory
         // read back zeros, Adreno 750): reims' older views, which import the guest's RAM by pointer and bind
         // nothing sparse from it. The setup's own boots too: they draw through the same reims
-        boolean noSparse = GpuCheck.noSparse(c);
+        boolean noSparse = GpuCheck.noSparse(c) || sys;     // the phone's own driver always runs in it
         if (noSparse) {
             env.put("REIMS_VGPU_DEFERRED_VIEWS", "0");
         }
@@ -2306,6 +2317,9 @@ final class Guest {
         compatSetupRun = sb != null;
         if (compat26) {
             AppLog.note(c, "gpu: compatibility mode (no sparse binds from host memory)");
+        }
+        if (sys) {
+            AppLog.note(c, "gpu: the phone's own Vulkan driver (experimental), compatibility mode");
         }
         try (PrintWriter w = new PrintWriter(new FileWriter(new File(run, "cmdline.txt")))) {
             w.println(String.join(" ", cmd));

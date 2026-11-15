@@ -250,7 +250,11 @@ final class Setup26Screen {
             String warn = GpuCheck.ramWarning(a);
             String head = "✓ " + r.summary;
             // a pass in the compatibility mode (GpuCheck.noSparse): said in amber right under the green line
-            String compat = r.nosparse ? "\nThis GPU's driver cannot do sparse binds from host memory, so iOS 26 and watchOS run in"
+            // (on the phone's own driver, GpuCheck.systemDriver, the line says what is true there: the Turnip sentence
+            // below is about the app's own driver, which does not run)
+            String compat = GpuCheck.systemDriver(a) ? "\nExperimental: iOS 26 and watchOS will run on this phone's own graphics driver, which we could"
+                    + " not test on this GPU. They may be slow, draw wrong pictures or stop. Send a report from Logs either way: it helps."
+                    : r.nosparse ? "\nThis GPU's driver cannot do sparse binds from host memory, so iOS 26 and watchOS run in"
                     + " a compatibility mode that can stop after long use. The app saves before that when it can." : "";
             android.text.SpannableString t = new android.text.SpannableString(head + compat
                     + (warn.isEmpty() ? "" : "\n\n" + warn) + (r.slow.isEmpty() ? "" : "\n\n" + r.slow));
