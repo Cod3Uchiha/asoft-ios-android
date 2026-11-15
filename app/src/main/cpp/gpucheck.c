@@ -404,6 +404,10 @@ static int test_render(void)
 
 static size_t host_align = 4096;
 
+/* The memory type the host import landed on (import_host), so the test can tell whether it must do the
+ * cache maintenance a HOST_CACHED non-coherent type needs. */
+static uint32_t host_import_type = UINT32_MAX;
+
 static int import_host(void *host, size_t size, uint32_t want_bits, VkDeviceMemory *m)
 {
     DFN(vkGetMemoryHostPointerPropertiesEXT);
@@ -428,6 +432,8 @@ static int import_host(void *host, size_t size, uint32_t want_bits, VkDeviceMemo
         say("error: no memory type both the resource and the host import take");
         return 0;
     }
+    host_import_type = t;
+    say("host import: memory type %u, flags %#x", t, mp.memoryTypes[t].propertyFlags);
     VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
                                             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, .pHostPointer = host};
     VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = size, .memoryTypeIndex = t};
@@ -444,6 +450,10 @@ static int test_host(void)
     DFN(vkCreateBuffer);
     DFN(vkGetBufferMemoryRequirements);
     DFN(vkBindBufferMemory);
+    DFN(vkMapMemory);
+    DFN(vkUnmapMemory);
+    DFN(vkFlushMappedMemoryRanges);
+    DFN(vkInvalidateMappedMemoryRanges);
     uint32_t n = 1 << 20;                  /* 4 MiB */
     size_t size = (size_t)n * 4;
     uint32_t *host = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -473,11 +483,49 @@ static int test_host(void)
         say("error: vkBindBufferMemory (host import): VkResult %d", r);
         return 0;
     }
+    /* A HOST_CACHED type that is not HOST_COHERENT needs explicit cache maintenance: flush what the CPU
+     * wrote before the GPU reads it, invalidate before the CPU reads what the GPU wrote. Without it the
+     * comparison below sees stale (cached) lines and the test reports a working import as broken -- which
+     * is what happens on Mali-G1-Ultra, whose only importable type is cached and non-coherent. */
+    VkBool32 coherent = (mp.memoryTypes[host_import_type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+    void *mapped = NULL;
+    VkMappedMemoryRange range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .memory = m, .offset = 0, .size = VK_WHOLE_SIZE};
+    if (!coherent) {
+        if (!vkMapMemory || !vkUnmapMemory || !vkFlushMappedMemoryRanges || !vkInvalidateMappedMemoryRanges) {
+            say("error: host-import cache maintenance functions missing");
+            return 0;
+        }
+        r = vkMapMemory(dev, m, 0, VK_WHOLE_SIZE, 0, &mapped);
+        if (r != VK_SUCCESS) {
+            say("error: vkMapMemory (host import): VkResult %d", r);
+            return 0;
+        }
+        r = vkFlushMappedMemoryRanges(dev, 1, &range);
+        if (r != VK_SUCCESS) {
+            say("error: vkFlushMappedMemoryRanges: VkResult %d", r);
+            vkUnmapMemory(dev, m);
+            return 0;
+        }
+    }
     if (compute_into(b, n) != VK_SUCCESS) {
+        if (mapped) {
+            vkUnmapMemory(dev, m);
+        }
         return 0;
     }
-    uint32_t bad = wrong_words(host, n);
+    if (mapped) {
+        r = vkInvalidateMappedMemoryRanges(dev, 1, &range);
+        if (r != VK_SUCCESS) {
+            say("error: vkInvalidateMappedMemoryRanges: VkResult %d", r);
+            vkUnmapMemory(dev, m);
+            return 0;
+        }
+    }
+    uint32_t bad = wrong_words(mapped ? (const uint32_t *)mapped : host, n);
     say("host memory: %u of %u words the GPU wrote into the phone's own pages wrong", bad, n);
+    if (mapped) {
+        vkUnmapMemory(dev, m);
+    }
     return bad == 0;
 }
 
