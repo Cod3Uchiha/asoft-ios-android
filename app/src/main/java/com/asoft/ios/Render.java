@@ -34,6 +34,12 @@ final class Render {
     /** CNTFRQ_EL0, the phone's counter frequency in Hz; 0 when it cannot be read (CounterFreq caches and checks it). */
     static native long counterHz();
 
+    /**
+     * The counter's rate measured against the kernel's clock over @ms milliseconds (it sleeps that long), for a
+     * phone whose CNTFRQ_EL0 reads 0; 0 when the counter cannot be read.
+     */
+    static native long counterMeasuredHz(int ms);
+
     static native boolean alive(int pid);
 
     /** The raw wait status @pid ended with, as the alive() that reaped it saw it; -1 when unknown. */

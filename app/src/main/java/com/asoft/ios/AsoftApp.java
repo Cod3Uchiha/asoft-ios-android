@@ -15,7 +15,8 @@ public class AsoftApp extends Application {
         // and its check says so itself
         if (getPackageName().equals(Application.getProcessName())) {
             AppExit.onStart(this);
-            CounterFreq.logOnce(this);
+            // off the main thread: a phone whose counter register reads 0 measures it, which sleeps 0.3 s
+            new Thread(() -> CounterFreq.logOnce(this), "counter").start();
         }
     }
 }

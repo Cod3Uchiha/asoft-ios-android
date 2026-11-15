@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <linux/falloc.h>
 
 #define TAG "asoft-render"
@@ -235,6 +236,69 @@ Java_com_asoft_ios_Render_counterHz(JNIEnv *env, jclass cls)
     }
     sigaction(SIGILL, &old, NULL);
     return (jlong)f;
+#else
+    return 0;
+#endif
+}
+
+/*
+ * The counter's rate measured against the kernel's clock over @ms milliseconds, for a phone whose CNTFRQ_EL0
+ * reads 0: an Exynos 9810's firmware leaves the register unset and its kernel takes the rate from its own device
+ * tree, which an app may not read (Galaxy S9+, 2026-11-15: 0 on all eight cores, 25,999,993 Hz measured over
+ * 2 s, so 26 MHz). CLOCK_MONOTONIC_RAW is that same counter scaled by the kernel's number, so the ratio is the
+ * kernel's number up to the jitter of the reads. Each end is the tightest of several clock/counter/clock reads.
+ * 0 when the counter cannot be read.
+ */
+#if defined(__aarch64__)
+static int cnt_sample(uint64_t *ticks, uint64_t *ns)
+{
+    uint64_t best = UINT64_MAX;
+    for (int i = 0; i < 9; i++) {
+        struct timespec a, b;
+        uint64_t v;
+        if (clock_gettime(CLOCK_MONOTONIC_RAW, &a)) {
+            return -1;
+        }
+        __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
+        clock_gettime(CLOCK_MONOTONIC_RAW, &b);
+        uint64_t ta = (uint64_t)a.tv_sec * 1000000000ull + (uint64_t)a.tv_nsec;
+        uint64_t tb = (uint64_t)b.tv_sec * 1000000000ull + (uint64_t)b.tv_nsec;
+        if (tb - ta < best) {
+            best = tb - ta;
+            *ticks = v;
+            *ns = ta + (tb - ta) / 2;
+        }
+    }
+    return 0;
+}
+#endif
+
+JNIEXPORT jlong JNICALL
+Java_com_asoft_ios_Render_counterMeasuredHz(JNIEnv *env, jclass cls, jint ms)
+{
+#if defined(__aarch64__)
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = cntfrq_ill;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGILL, &sa, &old);
+    volatile uint64_t hz = 0;
+    if (sigsetjmp(cntfrq_jmp, 1) == 0) {
+        uint64_t v0, t0, v1, t1;
+        if (ms < 20) {
+            ms = 20;
+        }
+        struct timespec d = { ms / 1000, (long)(ms % 1000) * 1000000L };
+        if (cnt_sample(&v0, &t0) == 0) {
+            while (nanosleep(&d, &d) && errno == EINTR) {
+            }
+            if (cnt_sample(&v1, &t1) == 0 && t1 > t0 && v1 > v0) {
+                hz = (uint64_t)((double)(v1 - v0) * 1e9 / (double)(t1 - t0) + 0.5);
+            }
+        }
+    }
+    sigaction(SIGILL, &old, NULL);
+    return (jlong)hz;
 #else
     return 0;
 #endif

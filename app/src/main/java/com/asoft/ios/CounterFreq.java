@@ -26,14 +26,40 @@ final class CounterFreq {
 
     private static long cached;
     private static String how = "";
-    private static boolean logged;
+    private static boolean logged, measured;
 
     /** A counter frequency that is believable (1 MHz up to what QEMU's u32 read of the tree holds), else 0. */
     static long sane(long raw) {
         return raw >= 1_000_000L && raw <= 0xFFFF_FFFFL ? raw : 0;
     }
 
-    /** The phone's counter frequency in Hz, read once; DEFAULT_HZ when the read gives 0 or nonsense. */
+    /** How long the measurement sleeps: at 26 MHz the two ends are read to well under 1 ppm over this. */
+    static final int MEASURE_MS = 300;
+
+    /**
+     * A measured rate as the number the phone's kernel has: a counter runs at a round number (19.2, 24, 26 MHz,
+     * 1 GHz), so a measurement within 100 ppm of a multiple of 100 kHz is that multiple, which every start then
+     * measures again (a quick save names the rate it ran on). Anything else keeps five digits.
+     */
+    static long rounded(long measured) {
+        if (measured <= 0) {
+            return 0;
+        }
+        long near = Math.round(measured / 100_000.0) * 100_000L;
+        if (near > 0 && Math.abs(measured - near) * 10_000L <= near) {
+            return near;
+        }
+        long step = 1;
+        for (long v = measured; v >= 100_000L; v /= 10) {
+            step *= 10;
+        }
+        return Math.round(measured / (double) step) * step;
+    }
+
+    /**
+     * The phone's counter frequency in Hz, got once: the CPU's register; when that reads 0 or nonsense (an Exynos
+     * 9810 leaves it unset), the counter measured against the clock; DEFAULT_HZ when neither gives a number.
+     */
     static synchronized long hz() {
         if (cached == 0) {
             long raw;
@@ -43,8 +69,22 @@ final class CounterFreq {
                 raw = 0;
             }
             long ok = sane(raw);
-            cached = ok != 0 ? ok : DEFAULT_HZ;
-            how = ok != 0 ? "read from the CPU" : "the read gave " + raw + ", using " + DEFAULT_HZ;
+            if (ok != 0) {
+                cached = ok;
+                how = "read from the CPU";
+            } else {
+                long m;
+                try {
+                    m = Render.counterMeasuredHz(MEASURE_MS);
+                } catch (UnsatisfiedLinkError | ExceptionInInitializerError | NoClassDefFoundError e) {
+                    m = 0;
+                }
+                long r = sane(rounded(m));
+                cached = r != 0 ? r : DEFAULT_HZ;
+                measured = r != 0;
+                how = r != 0 ? "the read gave " + raw + "; measured against the clock: " + m
+                        : "the read gave " + raw + ", the measurement " + m + ", using " + DEFAULT_HZ;
+            }
         }
         return cached;
     }
@@ -54,12 +94,13 @@ final class CounterFreq {
         cached = hz;
         how = "test";
         logged = false;
+        measured = false;
     }
 
     /** "counter: 19200000 Hz": for the run records and crash reports. */
     static String text() {
         long h = hz();
-        return "counter: " + h + " Hz" + (h == DEFAULT_HZ ? "" : " (not 19.2 MHz)");
+        return "counter: " + h + " Hz" + (measured ? " (measured: the CPU's register reads 0)" : h == DEFAULT_HZ ? "" : " (not 19.2 MHz)");
     }
 
     /** Once per app start: the value and where it came from, in the app log. */

@@ -192,6 +192,25 @@ public class CounterFreqTest {
     }
 
     @Test
+    public void aMeasuredRateIsTheRoundNumberTheKernelHas() {
+        // Galaxy S9+ (Exynos 9810), 2026-11-15: CNTFRQ_EL0 reads 0 on all eight cores; measured over 20 ms .. 2 s
+        for (long m : new long[] {25_999_993L, 26_000_564L, 25_999_553L, 26_000_039L, 25_999_860L, 26_000_019L}) {
+            assertEquals("" + m, 26_000_000L, CounterFreq.rounded(m));
+        }
+        assertEquals(19_200_000L, CounterFreq.rounded(19_199_871L));
+        assertEquals(19_200_000L, CounterFreq.rounded(19_200_650L));
+        assertEquals(24_000_000L, CounterFreq.rounded(24_000_101L));
+        assertEquals(1_000_000_000L, CounterFreq.rounded(999_999_400L));
+        // not near a multiple of 100 kHz: five digits of what was measured
+        assertEquals(32_768_000L, CounterFreq.rounded(32_768_123L));
+        assertEquals(13_560_000L, CounterFreq.rounded(13_560_300L));
+        // nothing measured
+        assertEquals(0, CounterFreq.rounded(0));
+        assertEquals(0, CounterFreq.rounded(-5));
+        assertEquals(0, CounterFreq.sane(CounterFreq.rounded(40_000L)));
+    }
+
+    @Test
     public void theReportsCarryTheCounter() {
         CounterFreq.setForTest(19_200_000L);
         assertEquals("counter: 19200000 Hz", CounterFreq.text());
