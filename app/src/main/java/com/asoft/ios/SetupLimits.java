@@ -35,21 +35,31 @@ final class SetupLimits {
 
     // -- iOS 26, DataMigration (PhoneSetup26.iosWallpaper) ---------------------------------------------------
     // All three count from the last answer of iOS's shell, so they only run once it has gone silent. A silent shell
-    // can come back by itself: #19 after about 13 min, one K18 phone after 69 (k18-stall.md fact 9), so no limit is
-    // under 40 min.
+    // can come back by itself: #19 after about 13 min, one K18 phone after 69 (k18-stall.md fact 9), and the S25's
+    // setup of 2026-11-14 after 26 min with the pid counter racing all the while (past 13,850): DataMigration
+    // finished inside that churn and the disk was good. Boots that never came back were silent for 125 min (#55)
+    // and 146 min (the HONOR) when the old 3 h limit ended them. So a racing pid counter is no proof of a dead
+    // boot, and the two limits that a guest with a moving console can reach are 120 min: longer than every
+    // silence that ended well, shorter than every one that did not.
 
     /**
      * Shell silent and the console's pid counter racing (k18-stall.md fact 3, 4: launchd respawns bash every
      * ~10 s, pids 24,746 to 25,302 in #55's tail, 66,012 on the HONOR, 26,049 on the S25's failed boot of
-     * 2026-11-08; a healthy boot ends near 1,250). The strongest fingerprint, so the shortest wait.
+     * 2026-11-08; a healthy boot ends near 1,250). It names the stall in the log and for the user; it ends the
+     * boot no sooner than plain silence does (it was 40 min, which would have cut the S25's boot of 2026-11-14
+     * off 14 min after it had finished by itself).
      */
-    static final long MIGRATION_CHURN_SILENT_MS = 40 * MIN;
+    static final long MIGRATION_CHURN_SILENT_MS = 120 * MIN;
 
-    /** Shell silent and nothing new on the console or the screen (#65: only our own polls echoed back). */
+    /**
+     * Shell silent and no sign of life: no line the console has not printed before, no higher pid, no new frame
+     * (#65: only our own polls echoed back). This is the rule that ends a guest that is not running at all; a
+     * churn keeps starting programs, so its pids rise and it is ended by the limit above.
+     */
     static final long MIGRATION_DEAD_SILENT_MS = 60 * MIN;
 
     /** Shell silent with no other explanation; the old 3 h limit counted from the start, this from the last answer. */
-    static final long MIGRATION_SILENT_MS = 90 * MIN;
+    static final long MIGRATION_SILENT_MS = 120 * MIN;
 
     /** Counted as racing: the console printed a pid this high (healthy boots end near 1,250)... */
     static final int CHURN_PID = 5_000;

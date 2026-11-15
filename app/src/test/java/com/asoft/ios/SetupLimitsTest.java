@@ -217,7 +217,7 @@ public class SetupLimitsTest {
     }
 
     @Test
-    public void issue55IsStoppedWellBefore3Hours() {
+    public void issue55IsStoppedAfterTwoHoursOfChurn() {
         // Xiaomi 15: "DataMigration 60 min ... crash reports: (no answer)"; the shell is silent from about minute 55
         // (modelled: pid 25,302 at minute 180 means ~3.4 pids/s from minute 55; the repeating lines and the AMFI line are the report's)
         long onset = 55 * 60;
@@ -233,9 +233,45 @@ public class SetupLimitsTest {
         MigrationWatch.Verdict v = run(w, 0, 180 * 60, pass, at);
         assertEquals(MigrationWatch.Verdict.STALL_CHURN, v);
         long min = at[0] / 60;
-        assertTrue("stopped at " + min, min >= 55 + 39 && min <= 100);
+        assertTrue("stopped at " + min, min >= 55 + 119 && min < 180);        // from the last answer, at 54.5 min
         assertTrue(w.maxPid() >= SetupLimits.CHURN_PID);
-        assertTrue(MigrationWatch.stallText(v, 40).contains("stopped responding during its own setup"));
+        assertTrue(MigrationWatch.stallText(v, 120).contains("stopped responding during its own setup"));
+    }
+
+    @Test
+    public void theS25BootThatCameOutOfTheChurnIsNotStopped() {
+        // S25, 2026-11-14: the shell answers until minute 20, then 26 min of silence while launchd respawns bash and
+        // the pid counter goes from 468 past 13,850; DataMigration is done at minute 45 and the shell answers again
+        long onset = 20 * 60, back = 46 * 60;
+        Pass pass = s -> {
+            if (s < onset || s >= back) {
+                return new Obs(true, "", 1320);
+            }
+            return new Obs(false, ISSUE55_NOISE + amfi((int) (468 + (s - onset) * 8.6)), 1320);
+        };
+        MigrationWatch w = new MigrationWatch(0);
+        long[] at = new long[1];
+        assertEquals(MigrationWatch.Verdict.WAIT, run(w, 0, 45 * 60, pass, at));
+        assertTrue(w.racing());                 // the fingerprint is there...
+        assertTrue(w.maxPid() > 13_000);
+        assertEquals(MigrationWatch.Verdict.WAIT, run(w, 45 * 60 + 30, 60 * 60, pass, at));      // ...and the boot is left alone
+        assertFalse(w.racing());                // an answer ends it
+        assertTrue(SetupLimits.MIGRATION_CHURN_SILENT_MS >= 120 * MIN);
+        assertTrue(SetupLimits.MIGRATION_CHURN_SILENT_MS >= SetupLimits.MIGRATION_SILENT_MS);
+    }
+
+    @Test
+    public void aChurnIsNotEndedAsAGuestThatShowsNothing() {
+        // the S25's console in the churn: its last line not printed before came 13 min in, the pids went on rising;
+        // an hour of that is not the "nothing has changed" stall
+        long onset = 20 * 60;
+        Pass pass = s -> s < onset ? new Obs(true, "", 1320)
+                : new Obs(false, ISSUE55_NOISE + amfi((int) (468 + (s - onset) * 8.6)), 1320);
+        MigrationWatch w = new MigrationWatch(0);
+        long[] at = new long[1];
+        assertEquals(MigrationWatch.Verdict.WAIT, run(w, 0, 20 * 60 + 110 * 60, pass, at));
+        assertEquals(" iOS has not answered for 110 min; last sign of life just now.", w.quietStatus((20 + 110) * 60_000L - 30_000L));
+        assertEquals(MigrationWatch.Verdict.STALL_CHURN, run(w, 130 * 60 + 30, 150 * 60, pass, at));
     }
 
     @Test
@@ -297,9 +333,9 @@ public class SetupLimitsTest {
     }
 
     @Test
-    public void aSilentShellWithNewConsoleLinesIsGivenTimeUpToNinetyMinutes() {
+    public void aSilentShellWithNewConsoleLinesIsGivenTimeUpToTwoHours() {
         // K18 fact 9: one phone's shell was silent for more than 69 min and then came back; new console lines
-        // all along mean the guest is doing something, so only the 90 min of silence ends the wait
+        // all along mean the guest is doing something, so only the 120 min of silence ends the wait
         Pass pass = s -> {
             if (s < 50 * 60 || s >= 119 * 60) {
                 return new Obs(true, "", 8);

@@ -7,7 +7,8 @@ import java.util.Locale;
  * app sees without the guest's help: whether its shell answered, the new console text, the frames shown. See
  * notes/handover-2026-11-13/k18-stall.md for the stall: the shell stops answering, launchd respawns bash every
  * ~10 s, the pid counter climbs past 25,000 (a healthy boot ends near 1,250). A shell that answers is never
- * stalled, however slow; the limits count from its last answer (SetupLimits). No Android here.
+ * stalled, however slow; the limits count from its last answer (SetupLimits). A sign of life is a console line not
+ * printed before, a higher pid, a new frame, an answer. No Android here.
  */
 final class MigrationWatch {
     enum Verdict { WAIT, STALL_CHURN, STALL_DEAD, STALL_SILENT, CEILING }
@@ -15,7 +16,7 @@ final class MigrationWatch {
     private final long start;
     private final ConsoleLife life = new ConsoleLife();
     private long lastAnswer, lastSign;
-    private int pidAtAnswer, frames = -1;
+    private int pidAtAnswer, pidSeen, frames = -1;
 
     MigrationWatch(long nowMs) {
         start = nowMs;
@@ -29,9 +30,13 @@ final class MigrationWatch {
      */
     void observe(long nowMs, boolean answered, String newText, int framesShown) {
         int novel = life.feed(newText);
-        if (novel > 0) {
+        // a pid higher than any before is a program launchd has just started: the guest runs, even when every line
+        // it prints is one it has printed before (the S25's churn of 2026-11-14 printed its last new line 13 min
+        // in and came back after 26). Such a guest is ended by the churn limit, not as one that shows nothing.
+        if (novel > 0 || life.maxPid() > pidSeen) {
             lastSign = nowMs;
         }
+        pidSeen = life.maxPid();
         if (framesShown >= 0) {
             if (frames >= 0 && framesShown > frames) {
                 lastSign = nowMs;
