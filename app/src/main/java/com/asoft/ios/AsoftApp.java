@@ -11,12 +11,12 @@ public class AsoftApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        // the GPU check runs in a process of its own (GpuCheckService): a driver that crashes takes only that one,
-        // and its check says so itself
+        // Keep process-start work Java-only. Reading CNTFRQ_EL0 and measuring CNTVCT_EL0 crosses
+        // into native signal handling; defer that work until an engine/setup actually needs the clock.
+        // A background native fault still terminates the entire Android process, even if the UI is not
+        // using the engine. The counter is cached by CounterFreq when first requested.
         if (getPackageName().equals(Application.getProcessName())) {
             AppExit.onStart(this);
-            // off the main thread: a phone whose counter register reads 0 measures it, which sleeps 0.3 s
-            new Thread(() -> CounterFreq.logOnce(this), "counter").start();
         }
     }
 }
