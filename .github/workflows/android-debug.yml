@@ -40,6 +40,31 @@ jobs:
           sed -i '/^org\.gradle\.java\.home=/d' gradle.properties
           chmod +x gradlew
 
+      - name: Fetch pinned upstream runtime payload
+        env:
+          UPSTREAM_APK: https://github.com/alpersamur3/asoft-ios-android/releases/download/v0.1.6/ASoftware-iOS-Android-0.1.6.apk
+          UPSTREAM_SHA256: befbcc1b31d83f166870010300a2a302e3570a7d3622d8de9c02fd896eeaa0cf
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets app/src/main/jniLibs/arm64-v8a
+          curl --fail --location --retry 3 --output /tmp/asoft-upstream.apk "$UPSTREAM_APK"
+          echo "$UPSTREAM_SHA256  /tmp/asoft-upstream.apk" | sha256sum --check -
+          rm -rf /tmp/asoft-runtime
+          mkdir -p /tmp/asoft-runtime
+          unzip -q /tmp/asoft-upstream.apk 'assets/*' 'lib/arm64-v8a/*' -d /tmp/asoft-runtime
+          if [ ! -d /tmp/asoft-runtime/assets ]; then
+            echo "::error::The pinned upstream APK contains no assets directory"
+            exit 1
+          fi
+          cp -a /tmp/asoft-runtime/assets/. app/src/main/assets/
+          cp -a /tmp/asoft-runtime/lib/arm64-v8a/. app/src/main/jniLibs/arm64-v8a/
+          # Gradle generates the fork's tracked setup manifest for clean builds.
+          rm -f app/src/main/assets/setup/asoft-setup.json
+          echo "Imported upstream runtime payload:"
+          du -sh app/src/main/assets app/src/main/jniLibs/arm64-v8a
+          find app/src/main/assets -type f | wc -l
+          find app/src/main/jniLibs/arm64-v8a -type f | wc -l
+
       - name: Run unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 
@@ -63,6 +88,11 @@ jobs:
             "assets/setup/tools/mkpayload.py"
             "lib/arm64-v8a/libqemu.so"
             "lib/arm64-v8a/libqemuimg.so"
+            "lib/arm64-v8a/libqemu26.so"
+            "lib/arm64-v8a/lib_libvulkan_freedreno.so.so"
+            "lib/arm64-v8a/lib_libvulkan.so.so"
+            "assets/setup/steps/ios26"
+            "assets/setup/scripts/ios26"
           )
           missing=0
           for file in "${required[@]}"; do
