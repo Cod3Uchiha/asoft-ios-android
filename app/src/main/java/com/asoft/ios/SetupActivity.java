@@ -246,6 +246,78 @@ public class SetupActivity extends Activity {
         section26 = from26.ios26Section();
         Ui.line(this, box, 22, 22);
         pcSection();
+        versionCatalogue();
+    }
+
+    /**
+     * Apple's real public iPhone OS/iOS generations. This is a catalogue, not an installer:
+     * only generations with an implemented setup path are labelled as available.
+     */
+    private void versionCatalogue() {
+        TextView heading = new TextView(this);
+        heading.setText("iPhone OS / iOS versions");
+        heading.setTextSize(20);
+        heading.setTextColor(Color.WHITE);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        heading.setPadding(0, Ui.dp(this, 24), 0, Ui.dp(this, 6));
+        box.addView(heading);
+
+        TextView note = new TextView(this);
+        note.setText("From the original iPhone OS 1 to iOS 26. Planned versions are listed for reference and cannot be installed yet. Apple did not release public iOS versions 19–25.");
+        note.setTextSize(13);
+        note.setTextColor(Ui.DIM);
+        note.setPadding(0, 0, 0, Ui.dp(this, 12));
+        box.addView(note);
+
+        String[][] versions = {
+                {"iPhone OS 1", "Planned"},
+                {"iPhone OS 2", "Planned"},
+                {"iPhone OS 3", "Planned"},
+                {"iOS 4", "Planned"},
+                {"iOS 5", "Planned"},
+                {"iOS 6", "Planned"},
+                {"iOS 7", "Planned"},
+                {"iOS 8", "Planned"},
+                {"iOS 9", "Planned"},
+                {"iOS 10", "Planned"},
+                {"iOS 11", "Planned"},
+                {"iOS 12", "Planned"},
+                {"iOS 13", "Planned"},
+                {"iOS 14", "Planned"},
+                {"iOS 15", "Planned"},
+                {"iOS 16", "Setup available · validation"},
+                {"iOS 17", "Planned"},
+                {"iOS 18", "Planned"},
+                {"iOS 26", "Experimental"}
+        };
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setBackground(Ui.surface(this, 20));
+        for (int i = 0; i < versions.length; i++) {
+            if (i > 0) {
+                Ui.line(this, list, 0, 0);
+            }
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
+
+            TextView name = new TextView(this);
+            name.setText(versions[i][0]);
+            name.setTextSize(15);
+            name.setTextColor(Color.WHITE);
+            row.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
+
+            TextView state = new TextView(this);
+            state.setText(versions[i][1]);
+            state.setTextSize(12);
+            state.setTextColor("Experimental".equals(versions[i][1]) ? Ui.LINK
+                    : versions[i][1].startsWith("Setup available") ? Ui.GREEN : Ui.DIM);
+            state.setGravity(Gravity.END);
+            row.addView(state, new LinearLayout.LayoutParams(-2, -2));
+            list.addView(row);
+        }
+        box.addView(list, new LinearLayout.LayoutParams(-1, -2));
     }
 
     /** "Bring it from your PC": an import of what the PC installer made, instead of the download. Closed unless a file is waiting. */
