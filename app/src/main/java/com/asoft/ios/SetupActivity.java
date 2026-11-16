@@ -292,7 +292,7 @@ public class SetupActivity extends Activity {
         };
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        list.setBackground(Ui.surface(this, 20));
+        list.setBackground(Ui.round(this, 0xff111113, 20));
         for (int i = 0; i < versions.length; i++) {
             if (i > 0) {
                 Ui.line(this, list, 0, 0);
