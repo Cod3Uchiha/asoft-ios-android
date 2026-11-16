@@ -37,7 +37,7 @@ jobs:
 
       - name: Prepare Gradle
         run: |
-          sed -i '/^org\\.gradle\\.java\\.home=/d' gradle.properties
+          sed -i '/^org\.gradle\.java\.home=/d' gradle.properties
           chmod +x gradlew
 
       - name: Run unit tests
