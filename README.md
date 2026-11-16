@@ -161,6 +161,20 @@ texture each display frame; input goes over QMP.
   the installers share), and for iOS 26 and watchOS the Windows installers' Linux step bodies and
   scripts (`ios26/`, `watchos/` there) with this repository's `setup/phone` jobs, into
   `app/src/main/assets`.
+- The iOS 16 XNU kernel is a generated build output, not a tracked source file. Fetch the
+  `xnu-kernel` artifact from the upstream XNU build workflow
+  ([dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)), then place
+  `kernel.development.sweet` at `$ASOFT_IOS_CHECKOUT/xnu/out-0103/kernel.development.sweet`
+  before running `pull-setup.sh`. Build the helper's 16 KiB kernel from
+  `setup/helper-kernel16k.config` and pass its path as `KERNEL16K`.
+- **CI runtime source:** the Android build downloads the upstream ASoftware Android v0.1.6
+  APK from its official GitHub release, verifies its published SHA-256 digest, and imports its
+  runtime assets and arm64 native libraries into this fork before compiling IOS-ui. This keeps
+  generated binaries out of Git and preserves the upstream runtime provenance. The build then
+  checks for the XNU kernel, helper VM, iOS 26 scripts, QEMU engines and Vulkan libraries; it
+  fails rather than upload a compile-only APK if any are missing. The runtime source version is
+  pinned in `.github/workflows/android-debug.yml` and must be deliberately updated when upstream
+  publishes a compatible release.
 - The app: `./gradlew assembleDebug` (Android Studio's JDK, SDK 36, NDK 29). A release build is
   signed when `~/.android/iosui-release.properties` (or `$IOSUI_SIGNING`) names a key.
 - Tests and measurements on a phone over adb: `dev/` (`dev/test-*.sh`; input goes to the phone only while the app is on top

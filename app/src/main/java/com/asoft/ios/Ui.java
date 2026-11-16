@@ -18,8 +18,8 @@ import android.widget.TextView;
 final class Ui {
     private Ui() {}
 
-    static final int BG = Color.BLACK, LINE = 0xff26262a, TEXT = 0xfff5f5f7, DIM = 0xff8e8e93, FAINT = 0xff636366,
-            LINK = 0xff6cb2ff, RED = 0xffff5a50, GREEN = 0xff32d74b, ORANGE = 0xffff9f0a;
+    static final int BG = 0xff0b1020, LINE = 0xff27334d, TEXT = 0xffedf2ff, DIM = 0xffa0aec6, FAINT = 0xff71809a,
+            LINK = 0xff63d9e8, RED = 0xffff7185, GREEN = 0xff5ee0a0, ORANGE = 0xffffbd66;
     static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
 
     static int dp(Context c, float v) {
@@ -59,11 +59,11 @@ final class Ui {
         t.setMinWidth(dp(c, 92));
         t.setPadding(dp(c, 20), dp(c, 8), dp(c, 20), dp(c, 8));
         t.setOnClickListener(l);
-        GradientDrawable g = round(c, outline ? Color.TRANSPARENT : TEXT, 19);
+        GradientDrawable g = round(c, outline ? Color.TRANSPARENT : LINK, 19);
         if (outline) {
             g.setStroke(dp(c, 1.2f), 0xff6e6e73);
         }
-        t.setTextColor(outline ? TEXT : 0xff0b0b0d);
+        t.setTextColor(outline ? TEXT : BG);
         t.setBackground(new RippleDrawable(ColorStateList.valueOf(outline ? 0x30ffffff : 0x30000000), g, round(c, Color.WHITE, 19)));
         return t;
     }

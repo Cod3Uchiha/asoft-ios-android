@@ -53,7 +53,7 @@ public class SetupActivity extends Activity {
         super.onCreate(state);
         DevNight.apply(this);
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.BLACK);
+        scroll.setBackgroundColor(Ui.BG);
         scroll.setFitsSystemWindows(true);
         box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -193,9 +193,9 @@ public class SetupActivity extends Activity {
         navBar.addView(Ui.link(this, "Logs", Ui.LINK, v -> startActivity(new Intent(this, LogsActivity.class))));
         box.addView(navBar);
         TextView title = new TextView(this);
-        title.setText("Set up");
+        title.setText("Installation centre");
         title.setTextSize(26);
-        title.setTextColor(Color.WHITE);
+        title.setTextColor(Ui.TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setPadding(0, Ui.dp(this, 6), 0, 28);
         box.addView(title);

@@ -109,7 +109,42 @@ final class PhoneSetup {
     }
 
     /** Runs what is still to do; throws with a message for the screen when it stops. */
+    /** Fail before downloading gigabytes if this APK was built without the setup payload. */
+    private static void requireAsset(Context c, String name) throws IOException {
+        try (InputStream in = c.getAssets().open(name)) {
+            // Opening the asset is enough; Android verifies the packaged entry here.
+        } catch (IOException e) {
+            throw new IOException("This IOS-ui build is missing a required setup asset: " + name
+                    + ". The APK is incomplete. Rebuild after running pull-setup.sh with the matching iOS source checkout.", e);
+        }
+    }
+
+    private static void verifyIos16Assets(Context c) throws IOException {
+        for (String name : new String[] {
+                "xnu/kernel.development.sweet",
+                "helper/Image.gz.bin",
+                "helper/initrd.gz.bin",
+                "helper/Image16k.gz.bin",
+                "setup/tools/ipsw-devicetree.py",
+                "setup/tools/lzfse.py",
+                "setup/tools/mkadt.py",
+                "setup/tools/adt.py",
+                "setup/tools/mkpayload.py"
+        }) {
+            requireAsset(c, name);
+        }
+        File libDir = new File(c.getApplicationInfo().nativeLibraryDir);
+        for (String name : new String[] {"libqemu.so", "libqemuimg.so"}) {
+            File library = new File(libDir, name);
+            if (!library.isFile() || !library.canRead()) {
+                throw new IOException("This IOS-ui build is missing required native runtime library: " + name
+                        + ". Rebuild after running pull-libs.sh; setup cannot run without QEMU.");
+            }
+        }
+    }
+
     static void run(Context c, int cpus, Progress p, BooleanSupplier cancelled, IpswFetch[] current) throws IOException {
+        verifyIos16Assets(c);
         File w = work(c);
         w.mkdirs();
         JSONObject ios16;

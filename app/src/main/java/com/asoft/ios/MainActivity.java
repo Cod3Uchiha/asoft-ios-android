@@ -16,6 +16,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -28,6 +29,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
@@ -42,8 +45,8 @@ public class MainActivity extends Activity {
     /** The crash notification's extra (CrashReport): the record's id, whose report this screen opens. */
     static final String EXTRA_CRASH = "crash";
 
-    private static final int BG = Color.BLACK, LINE = 0xff26262a, TEXT = 0xfff5f5f7, DIM = 0xff8e8e93, FAINT = 0xff636366,
-            LINK = 0xff6cb2ff, RED = 0xffff5a50, GREEN = 0xff32d74b, ORANGE = 0xffff9f0a;
+    private static final int BG = 0xff0b1020, LINE = 0xff27334d, TEXT = 0xffedf2ff, DIM = 0xffa0aec6, FAINT = 0xff71809a,
+            LINK = 0xff63d9e8, RED = 0xffff7185, GREEN = 0xff5ee0a0, ORANGE = 0xffffbd66;
 
     /** One system's panel. */
     private final class Panel {
@@ -68,6 +71,7 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout box;
+    private boolean launchFailed;
     private final Panel p26 = new Panel(Guest.IOS26), p16 = new Panel(Guest.IOS16), pWatch = new Panel(Guest.WATCH);
     private TextView hint, powerWarn, freeRamValue, wadbValue, updateValue, logsValue, footer, engineLog;
     private LinearLayout updateBar, advanced;
@@ -136,7 +140,7 @@ public class MainActivity extends Activity {
 
     /** The surface of a panel or a group: a little lighter at its top, a hairline around it. */
     private GradientDrawable surface(float radiusDp) {
-        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0xff19191c, 0xff111113});
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0xff1b2942, 0xff111a2d});
         g.setCornerRadius(dp(radiusDp));
         g.setStroke(Math.max(1, dp(0.75f)), LINE);
         return g;
@@ -180,11 +184,11 @@ public class MainActivity extends Activity {
     }
 
     private void fill(TextView capsule, boolean outline) {
-        GradientDrawable g = round(outline ? Color.TRANSPARENT : TEXT, 19);
+        GradientDrawable g = round(outline ? Color.TRANSPARENT : LINK, 19);
         if (outline) {
             g.setStroke(dp(1.2f), 0xff6e6e73);
         }
-        capsule.setTextColor(outline ? TEXT : 0xff0b0b0d);
+        capsule.setTextColor(outline ? TEXT : BG);
         capsule.setBackground(new RippleDrawable(ColorStateList.valueOf(outline ? 0x30ffffff : 0x30000000), g, round(Color.WHITE, 19)));
     }
 
@@ -355,6 +359,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        try {
         DevNight.apply(this);
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
@@ -376,15 +381,42 @@ public class MainActivity extends Activity {
         brand.addView(logo, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout names = new LinearLayout(this);
         names.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text(names, "ASoftware", 25, TEXT);
+        TextView title = text(names, "IOS-ui", 25, TEXT);
         title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         title.setLetterSpacing(-0.01f);
-        text(names, "iPhone and Apple Watch software, on this phone", 13, DIM);
-        brand.addView(names);
+        text(names, "Apple systems · running on Android", 13, DIM);
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        brand.addView(names, nameLp);
+        TextView beta = text(brand, "DEVICE LAB", 10.5f, LINK);
+        beta.setTypeface(MEDIUM);
+        beta.setLetterSpacing(0.08f);
+        beta.setPadding(dp(10), dp(7), dp(10), dp(7));
+        beta.setBackground(round(0xff183247, 12));
+        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(-2, -2);
+        betaLp.leftMargin = dp(8);
+        beta.setLayoutParams(betaLp);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, -2);
         blp.leftMargin = -dp(8);
         blp.bottomMargin = dp(18);
         box.addView(brand, blp);
+
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setPadding(dp(20), dp(19), dp(20), dp(19));
+        hero.setBackground(surface(24));
+        TextView eyebrow = text(hero, "IOS-UI  /  DEVICE CONTROL", 10.5f, LINK);
+        eyebrow.setTypeface(MEDIUM);
+        eyebrow.setLetterSpacing(0.11f);
+        TextView heroTitle = text(hero, "Your systems.\nOne device.", 26, TEXT);
+        heroTitle.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        heroTitle.setLineSpacing(dp(1), 1f);
+        ((LinearLayout.LayoutParams) heroTitle.getLayoutParams()).topMargin = dp(8);
+        TextView heroNote = text(hero, "Install, start and manage virtual Apple systems directly on your Android phone.", 13.5f, DIM);
+        heroNote.setLineSpacing(dp(2), 1f);
+        ((LinearLayout.LayoutParams) heroNote.getLayoutParams()).topMargin = dp(6);
+        LinearLayout.LayoutParams heroLp = new LinearLayout.LayoutParams(-1, -2);
+        heroLp.bottomMargin = dp(16);
+        box.addView(hero, heroLp);
 
         addUpdateBar();
         // a setup that failed or the app's own end the user has not seen yet (RecordNotice): asks for its log
@@ -405,13 +437,14 @@ public class MainActivity extends Activity {
         box.addView(powerWarn, wlp);
         powerWarn.setVisibility(View.GONE);
 
+        heading(box, "Your systems");
         box.addView(buildPanel(p26, "iOS 26", DeviceView.ISLAND, new int[] {0xff5a9bff, 0xff4a5df0, 0xff5b36cf}),
                 new LinearLayout.LayoutParams(-1, -2));
         box.addView(buildPanel(p16, "iOS 16", DeviceView.HOME, new int[] {0xff5ad1c8, 0xff2f8fe0, 0xff3a56c9}),
                 top(new LinearLayout.LayoutParams(-1, -2), dp(12)));
         box.addView(buildPanel(pWatch, "watchOS", DeviceView.WATCH, null), top(new LinearLayout.LayoutParams(-1, -2), dp(12)));
 
-        heading(box, "Settings");
+        heading(box, "Preferences");
         LinearLayout settings = group(box, 0);
         freeRamValue = row(settings, "Free memory for iOS", v -> toggleFreeRam());
         wadbValue = row(settings, "Wireless debugging", v -> wirelessDebugging());
@@ -456,6 +489,28 @@ public class MainActivity extends Activity {
         if (saved == null) {
             showCrashOf(getIntent());
         }
+        } catch (Throwable error) {
+            launchFailed = true;
+            StringWriter trace = new StringWriter();
+            error.printStackTrace(new PrintWriter(trace));
+            String report = "IOS-ui startup error\n\n" + trace;
+            try {
+                File out = new File(getFilesDir(), "launch-crash.txt");
+                try (java.io.FileOutputStream stream = new java.io.FileOutputStream(out)) {
+                    stream.write(report.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Throwable ignored) { }
+            TextView diagnostic = new TextView(this);
+            diagnostic.setText(report + "\n\nShare this screen or retrieve launch-crash.txt.");
+            diagnostic.setTextIsSelectable(true);
+            diagnostic.setTextSize(13);
+            diagnostic.setPadding(dp(18), dp(24), dp(18), dp(24));
+            diagnostic.setBackgroundColor(0xff0b1020);
+            diagnostic.setTextColor(0xffff7185);
+            ScrollView errorScreen = new ScrollView(this);
+            errorScreen.addView(diagnostic);
+            setContentView(errorScreen);
+        }
     }
 
     /** Opened again from the crash notification (CLEAR_TOP | SINGLE_TOP): its report. */
@@ -479,6 +534,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (launchFailed) return;
         android.content.IntentFilter f = new android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(powerChanged, f, RECEIVER_NOT_EXPORTED);   // a system broadcast still comes
@@ -494,9 +550,11 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
-        unregisterReceiver(powerChanged);
-        powerWarn.removeCallbacks(powerRecheck);
-        footer.removeCallbacks(follow);
+        if (!launchFailed) {
+            unregisterReceiver(powerChanged);
+            powerWarn.removeCallbacks(powerRecheck);
+            footer.removeCallbacks(follow);
+        }
         super.onPause();
     }
 
@@ -1589,7 +1647,7 @@ public class MainActivity extends Activity {
         showPowerWarning();
         hint.setVisibility(!Guest.available(this) && !Guest.available26(this) && !WatchProfile.available(this)
                 && !SetupService.busy() ? View.VISIBLE : View.GONE);
-        footer.setText(String.format(java.util.Locale.ROOT, "ASoftware iOS %s  ·  %.1f GB free on this phone",
+        footer.setText(String.format(java.util.Locale.ROOT, "IOS-ui %s  ·  %.1f GB free on this phone",
                 UpdateCheck.version(this), getFilesDir().getUsableSpace() / 1e9));
     }
 }
