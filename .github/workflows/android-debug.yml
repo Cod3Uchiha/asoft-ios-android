@@ -46,11 +46,36 @@ jobs:
       - name: Compile IOS-ui debug APK
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Verify IOS-ui package and setup manifest
+      - name: Verify complete IOS-ui runtime payload
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          unzip -l "$APK" | grep -q 'assets/setup/asoft-setup.json'
+          unzip -l "$APK" > apk-contents.txt
+          required=(
+            "assets/setup/asoft-setup.json"
+            "assets/xnu/kernel.development.sweet"
+            "assets/helper/Image.gz.bin"
+            "assets/helper/initrd.gz.bin"
+            "assets/helper/Image16k.gz.bin"
+            "assets/setup/tools/ipsw-devicetree.py"
+            "assets/setup/tools/lzfse.py"
+            "assets/setup/tools/mkadt.py"
+            "assets/setup/tools/adt.py"
+            "assets/setup/tools/mkpayload.py"
+            "lib/arm64-v8a/libqemu.so"
+            "lib/arm64-v8a/libqemuimg.so"
+          )
+          missing=0
+          for file in "${required[@]}"; do
+            if ! grep -Fq "$file" apk-contents.txt; then
+              echo "::error::IOS-ui APK is missing required runtime file: $file"
+              missing=1
+            fi
+          done
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.cod3uchiha.iosui'"
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::This build is compile-only and must not be distributed. Run pull-setup.sh and pull-libs.sh before building."
+            exit 1
+          fi
           cp "$APK" app/build/outputs/apk/debug/IOS-ui-debug.apk
 
       - name: Upload IOS-ui APK
