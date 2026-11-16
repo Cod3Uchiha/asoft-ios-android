@@ -1,9 +1,9 @@
-name: Android debug build
+name: IOS-ui Android build
 
 on:
   push:
     branches:
-      - fix/s22-ultra-ios16-performance
+      - main
   pull_request:
     branches:
       - main
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Compile IOS-ui APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -37,23 +37,26 @@ jobs:
 
       - name: Prepare Gradle
         run: |
-          sed -i '/^org\.gradle\.java\.home=/d' gradle.properties
+          sed -i '/^org\\.gradle\\.java\\.home=/d' gradle.properties
           chmod +x gradlew
 
       - name: Run unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Assemble debug APK
+      - name: Compile IOS-ui debug APK
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Verify required setup manifest is packaged
+      - name: Verify IOS-ui package and setup manifest
         run: |
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -q 'assets/setup/asoft-setup.json'
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          unzip -l "$APK" | grep -q 'assets/setup/asoft-setup.json'
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.cod3uchiha.iosui'"
+          cp "$APK" app/build/outputs/apk/debug/IOS-ui-debug.apk
 
-      - name: Upload debug APK
+      - name: Upload IOS-ui APK
         uses: actions/upload-artifact@v4
         with:
-          name: asoft-ios-android-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: IOS-ui-debug
+          path: app/build/outputs/apk/debug/IOS-ui-debug.apk
           if-no-files-found: error
           retention-days: 14
