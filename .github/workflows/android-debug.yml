@@ -58,6 +58,9 @@ jobs:
           fi
           cp -a /tmp/asoft-runtime/assets/. app/src/main/assets/
           cp -a /tmp/asoft-runtime/lib/arm64-v8a/. app/src/main/jniLibs/arm64-v8a/
+          # gpucheck is built from this fork's CMake source; do not package the upstream
+          # copy as well, or AGP fails mergeDebugNativeLibs with a duplicate .so path.
+          rm -f app/src/main/jniLibs/arm64-v8a/libgpucheck.so
           # Gradle generates the fork's tracked setup manifest for clean builds.
           rm -f app/src/main/assets/setup/asoft-setup.json
           echo "Imported upstream runtime payload:"
