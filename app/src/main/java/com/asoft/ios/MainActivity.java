@@ -394,7 +394,7 @@ public class MainActivity extends Activity {
         beta.setBackground(round(0xff183247, 12));
         LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(-2, -2);
         betaLp.leftMargin = dp(8);
-        brand.addView(beta, betaLp);
+        beta.setLayoutParams(betaLp);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, -2);
         blp.leftMargin = -dp(8);
         blp.bottomMargin = dp(18);
