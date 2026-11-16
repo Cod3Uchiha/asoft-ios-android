@@ -16,6 +16,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -28,6 +29,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
@@ -68,6 +71,7 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout box;
+    private boolean launchFailed;
     private final Panel p26 = new Panel(Guest.IOS26), p16 = new Panel(Guest.IOS16), pWatch = new Panel(Guest.WATCH);
     private TextView hint, powerWarn, freeRamValue, wadbValue, updateValue, logsValue, footer, engineLog;
     private LinearLayout updateBar, advanced;
@@ -355,6 +359,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        try {
         DevNight.apply(this);
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
@@ -484,6 +489,28 @@ public class MainActivity extends Activity {
         if (saved == null) {
             showCrashOf(getIntent());
         }
+        } catch (Throwable error) {
+            launchFailed = true;
+            StringWriter trace = new StringWriter();
+            error.printStackTrace(new PrintWriter(trace));
+            String report = "IOS-ui startup error\n\n" + trace;
+            try {
+                File out = new File(getFilesDir(), "launch-crash.txt");
+                try (java.io.FileOutputStream stream = new java.io.FileOutputStream(out)) {
+                    stream.write(report.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Throwable ignored) { }
+            TextView diagnostic = new TextView(this);
+            diagnostic.setText(report + "\n\nShare this screen or retrieve launch-crash.txt.");
+            diagnostic.setTextIsSelectable(true);
+            diagnostic.setTextSize(13);
+            diagnostic.setPadding(dp(18), dp(24), dp(18), dp(24));
+            diagnostic.setBackgroundColor(0xff0b1020);
+            diagnostic.setTextColor(0xffff7185);
+            ScrollView errorScreen = new ScrollView(this);
+            errorScreen.addView(diagnostic);
+            setContentView(errorScreen);
+        }
     }
 
     /** Opened again from the crash notification (CLEAR_TOP | SINGLE_TOP): its report. */
@@ -507,6 +534,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (launchFailed) return;
         android.content.IntentFilter f = new android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(powerChanged, f, RECEIVER_NOT_EXPORTED);   // a system broadcast still comes
@@ -522,9 +550,11 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
-        unregisterReceiver(powerChanged);
-        powerWarn.removeCallbacks(powerRecheck);
-        footer.removeCallbacks(follow);
+        if (!launchFailed) {
+            unregisterReceiver(powerChanged);
+            powerWarn.removeCallbacks(powerRecheck);
+            footer.removeCallbacks(follow);
+        }
         super.onPause();
     }
 
