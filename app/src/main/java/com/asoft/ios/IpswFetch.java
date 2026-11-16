@@ -644,6 +644,7 @@ final class IpswFetch {
         try (FileChannel ch = FileChannel.open(target.toPath(), StandardOpenOption.WRITE);
              FileOutputStream doneOut = new FileOutputStream(donePath, true)) {
             List<Thread> workers = new ArrayList<>();
+            int[] sinceSync = {0};
             for (int w = 0; w < Math.min(connections, Math.max(1, todo.size())); w++) {
                 Thread t = new Thread(() -> {
                     Integer idx;
@@ -652,7 +653,15 @@ final class IpswFetch {
                             fetchChunk(it, ch, base, idx);
                             synchronized (doneOut) {
                                 doneOut.write((idx + "\n").getBytes(StandardCharsets.US_ASCII));
-                                doneOut.getFD().sync();
+                                // Sync in batches: syncing flash storage after every 32 MiB chunk
+                                // serializes all eight download workers. If the app is killed, at
+                                // most three completed chunks are fetched again; the chunk data
+                                // itself is still verified by the IPSW member CRC before use.
+                                if (++sinceSync[0] >= 4) {
+                                    doneOut.flush();
+                                    doneOut.getFD().sync();
+                                    sinceSync[0] = 0;
+                                }
                             }
                             listener.progress(it);
                         } catch (IOException ex) {
@@ -676,6 +685,9 @@ final class IpswFetch {
                     Thread.currentThread().interrupt();
                 }
             }
+            // Persist the final partial batch, including when a worker failed or was stopped.
+            doneOut.flush();
+            doneOut.getFD().sync();
         }
         if (stop) {
             throw new IOException("stopped");

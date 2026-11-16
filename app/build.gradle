@@ -37,6 +37,19 @@ android {
     sourceSets {
         main { jniLibs.srcDirs = ['src/main/jniLibs', 'src/main/jniLibs26'] }
     }
+
+    // The setup manifest is tracked at the repository root; pull-setup.sh also copies it
+    // into the ignored assets tree on developer machines. Generate this one required asset
+    // during every Gradle build so clean CI builds and installed APKs always contain it.
+    def generatedSetupAssets = layout.buildDirectory.dir('generated/setupAssets')
+    sourceSets.main.assets.srcDir(generatedSetupAssets)
+    tasks.register('copySetupManifest', Copy) {
+        from(rootProject.file('setup/asoft-setup.json'))
+        into(generatedSetupAssets.map { it.dir('setup') })
+    }
+    tasks.named('preBuild').configure {
+        dependsOn(tasks.named('copySetupManifest'))
+    }
     buildTypes {
         // the test services and the screen take adb's intents in a debug build only
         debug {

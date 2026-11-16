@@ -9,13 +9,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * How many vCPUs iOS gets and which of the phone's CPUs run them: four, on any core, on every
- * phone. The kernel's ranking of its cores (cpu_capacity, 1024 = the fastest; "fast" = 60% of the
- * best or more) goes to the app's log only. Measured on the A71 (2026-11-05, power saving on): two
- * Cortex-A76 (1024) and six A55 (492); four vCPUs anywhere reached the lock screen in ~21 min, two
- * vCPUs pinned to the A76 (with the native EL0 stubs) had not left the boot logo after 30 min.
- * XNU runs under TCG there 75-79% of the vCPUs' time, so vCPUs in parallel count for more than
- * fast cores. A saved state keeps the count it was saved with (Guest.savedCpus).
+ * How many vCPUs iOS gets and which of the phone's CPUs run them. Four vCPUs are used on every
+ * phone. When at least four cores have 60% or more of the best core's capacity, pinning the vCPU
+ * and native EL0 worker threads to those cores avoids migrating the emulation workload onto the
+ * little cores. Phones with fewer than four fast cores keep normal Android scheduling: pinning
+ * four vCPUs onto only one or two big cores can starve the guest's parallel TCG work.
+ *
+ * A saved state keeps the count it was saved with (Guest.savedCpus).
  * cpu.txt in the app's external folder overrides it for tests: "smp=2 pin=6,7" ("pin=" none).
  */
 final class CpuPlan {
@@ -70,14 +70,21 @@ final class CpuPlan {
         if (cap.isEmpty() || best <= 0) {
             return new CpuPlan(4, "", "no cpu_capacity: 4 vCPUs, any core");
         }
+
         StringBuilder fast = new StringBuilder();
         int n = 0;
         for (int i = 0; i < cap.size(); i++) {
-            if (cap.get(i) * 10 >= best * 6) {
+            if (cap.get(i) > 0 && cap.get(i) * 10 >= best * 6) {
                 fast.append(n++ > 0 ? "," : "").append(i);
             }
         }
-        return new CpuPlan(4, "", n + " of " + cap.size() + " cores fast (capacity " + cap + "), fast: " + fast);
+
+        // Pin only when every vCPU can have its own fast host core. Otherwise let Android's
+        // scheduler distribute the TCG and native EL0 work across the whole CPU set.
+        String pin = n >= 4 ? fast.toString() : "";
+        String reason = n + " of " + cap.size() + " cores fast (capacity " + cap + "), fast: "
+                + (fast.length() == 0 ? "none" : fast);
+        return new CpuPlan(4, pin, reason + (pin.isEmpty() ? "; scheduler chooses cores" : "; pinned to fast cores"));
     }
 
     private static int readInt(File f) {
