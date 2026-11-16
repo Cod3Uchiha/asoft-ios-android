@@ -1,4 +1,6 @@
-# ASoftware iOS for Android
+# IOS-ui
+
+IOS-ui is a fork of [ASoftware iOS for Android](https://github.com/alpersamur3/asoft-ios-android), originally created by [alpersamur3](https://github.com/alpersamur3). This fork is maintained by [Cod3uchiha](https://github.com/Cod3Uchiha) and includes its own changes and experiments. It builds on the upstream project's work; original authorship and third-party licences remain acknowledged below.
 
 iOS 16, and as previews iOS 26 and watchOS, in an Android app, on a stock phone: no root, locked
 bootloader, no Termux. Each can be installed on the phone itself from Apple's servers (iOS 26 and
@@ -160,7 +162,7 @@ texture each display frame; input goes over QMP.
   scripts (`ios26/`, `watchos/` there) with this repository's `setup/phone` jobs, into
   `app/src/main/assets`.
 - The app: `./gradlew assembleDebug` (Android Studio's JDK, SDK 36, NDK 29). A release build is
-  signed when `~/.android/asoft-ios-release.properties` (or `$ASOFT_SIGNING`) names a key.
+  signed when `~/.android/iosui-release.properties` (or `$IOSUI_SIGNING`) names a key.
 - Tests and measurements on a phone over adb: `dev/` (`dev/test-*.sh`; input goes to the phone only while the app is on top
   and the phone is unlocked).
 
@@ -187,3 +189,14 @@ The app's code: MIT (LICENSE). The APK also carries:
   AOSP's adb (Apache 2.0); SPAKE2's two points are BoringSSL's.
 
 Not affiliated with Apple. iOS is Apple's.
+
+
+## Credits
+
+- **Original project:** [ASoftware iOS for Android](https://github.com/alpersamur3/asoft-ios-android) by [alpersamur3](https://github.com/alpersamur3). IOS-ui is a fork; the original implementation, research, and upstream work belong to their respective authors.
+- **Windows companion project:** [ASoftware iOS](https://github.com/alpersamur3/asoft-ios).
+- **Fork and modifications:** [Cod3uchiha / IOS-ui](https://github.com/Cod3Uchiha/asoft-ios-android).
+- **QEMU and related components:** [qemu-sptm](https://github.com/alpersamur3/qemu-sptm), [reims-vgpu](https://github.com/alpersamur3/reims-vgpu), and [metal2vulkan](https://github.com/alpersamur3/metal2vulkan).
+- **Other bundled components:** Mesa Turnip, the Khronos Vulkan loader, Conscrypt, Linux, Ubuntu packages, and apfs-fuse. Their respective licences and source links are listed in [Licenses](#licenses).
+
+Please retain upstream attribution and the applicable copyright and licence notices when redistributing or modifying this project.
