@@ -162,7 +162,7 @@ texture each display frame; input goes over QMP.
   scripts (`ios26/`, `watchos/` there) with this repository's `setup/phone` jobs, into
   `app/src/main/assets`.
 - The app: `./gradlew assembleDebug` (Android Studio's JDK, SDK 36, NDK 29). A release build is
-  signed when `~/.android/asoft-ios-release.properties` (or `$ASOFT_SIGNING`) names a key.
+  signed when `~/.android/iosui-release.properties` (or `$IOSUI_SIGNING`) names a key.
 - Tests and measurements on a phone over adb: `dev/` (`dev/test-*.sh`; input goes to the phone only while the app is on top
   and the phone is unlocked).
 
